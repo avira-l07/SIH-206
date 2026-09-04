@@ -1,0 +1,62 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           Int          @id @default(autoincrement())
+  name         String
+  email        String       @unique
+  passwordHash String
+  role         String       @default("CITIZEN") // CITIZEN, VOLUNTEER, ADMIN
+  phone        String?
+  lat          Float?
+  lng          Float?
+  createdAt    DateTime     @default(now())
+  sosRequests  SOSRequest[]
+}
+
+model Alert {
+  id         Int      @id @default(autoincrement())
+  hazardType String   // FLOOD, EARTHQUAKE, FIRE
+  severity   String   // WATCH, CRITICAL
+  region     String
+  lat        Float
+  lng        Float
+  message    String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+}
+
+model SOSRequest {
+  id                  Int      @id @default(autoincrement())
+  userId              Int?
+  user                User?    @relation(fields: [userId], references: [id])
+  userName            String
+  userPhone           String?
+  lat                 Float
+  lng                 Float
+  message             String
+  hazardType          String   @default("FLOOD")
+  status              String   @default("PENDING") // PENDING, IN_PROGRESS, RESOLVED
+  assignedVolunteerId Int?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Shelter {
+  id               Int      @id @default(autoincrement())
+  name             String
+  address          String
+  lat              Float
+  lng              Float
+  capacity         Int
+  currentOccupancy Int      @default(0)
+  contact          String
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+}
