@@ -9,6 +9,7 @@
   --color-line: #D8D3C7;
   --color-card: #FFFFFF;
   --color-surface: #EDE9DE;
+  --color-unverified: #9A968C;
 
   --font-display: "Space Grotesk", sans-serif;
   --font-sans: "Inter", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -21,6 +22,7 @@
   --watch: #C97A2B;
   --critical: #B23A2E;
   --line: #D8D3C7;
+  --unverified: #9A968C;
 }
 
 body {

@@ -1,15 +1,48 @@
-import React, { useState } from 'react';
-import { AlertOctagon, MapPin, Loader2, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { AlertOctagon, MapPin, Loader2, CheckCircle2, HeartHandshake, Battery, BatteryWarning, UserCheck, Users } from 'lucide-react';
 import api from '../services/api';
+
+const VULNERABILITY_OPTIONS = [
+  { id: 'dialysis', label: 'Dialysis Patient' },
+  { id: 'elderly', label: 'Bedridden / Elderly' },
+  { id: 'infant', label: 'Infant / Toddler' },
+  { id: 'pregnant', label: 'Pregnant' },
+];
 
 export default function SOSButton({ onSOSCreated, defaultCoords }) {
   const [isOpen, setIsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [hazardType, setHazardType] = useState('FLOOD');
+  const [vulnerabilityTags, setVulnerabilityTags] = useState([]);
   const [message, setMessage] = useState('');
   const [coords, setCoords] = useState(defaultCoords || { lat: 19.0760, lng: 72.8777 });
   const [locating, setLocating] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Battery status (Decision 0.1 & Item 1.4)
+  const [batteryLevel, setBatteryLevel] = useState(null);
+  const [batterySupported, setBatterySupported] = useState(false);
+
+  // Proxy distress reporting (Item 2.1)
+  const [reportedByProxy, setReportedByProxy] = useState(false);
+  const [subjectDescription, setSubjectDescription] = useState('');
+
+  const readBatteryStatus = () => {
+    if (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function') {
+      navigator.getBattery()
+        .then((bat) => {
+          setBatteryLevel(Math.round(bat.level * 100));
+          setBatterySupported(true);
+        })
+        .catch(() => {
+          setBatteryLevel(null);
+          setBatterySupported(false);
+        });
+    } else {
+      setBatteryLevel(null);
+      setBatterySupported(false);
+    }
+  };
 
   const acquireLocation = () => {
     if (!navigator.geolocation) return;
@@ -29,12 +62,24 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
 
   const handleOpenModal = () => {
     acquireLocation();
+    readBatteryStatus();
     setIsOpen(true);
     setSuccessMessage('');
   };
 
+  const toggleVulnerabilityTag = (id) => {
+    setVulnerabilityTags((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (reportedByProxy && !subjectDescription.trim()) {
+      alert('Please describe who you are reporting this SOS for.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -42,16 +87,23 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
         message: message.trim() || `Emergency distress call for ${hazardType} situation`,
         lat: coords.lat,
         lng: coords.lng,
+        vulnerabilityTags: vulnerabilityTags.join(','),
+        batteryLevel,
+        reportedByProxy,
+        subjectDescription: reportedByProxy ? subjectDescription.trim() : null,
       };
 
       const res = await api.post('/sos', payload);
-      setSuccessMessage('Emergency broadcast transmitted. Responders alerted.');
+      setSuccessMessage('Emergency broadcast transmitted. Priority dispatch queued.');
       if (onSOSCreated) {
         onSOSCreated(res.data.sos);
       }
       setTimeout(() => {
         setIsOpen(false);
         setMessage('');
+        setVulnerabilityTags([]);
+        setReportedByProxy(false);
+        setSubjectDescription('');
         setSuccessMessage('');
       }, 1800);
     } catch (err) {
@@ -103,12 +155,12 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
                 <CheckCircle2 className="w-12 h-12 text-[#2E6E4E] mx-auto animate-bounce" />
                 <p className="font-display font-bold text-lg text-[#2E6E4E]">{successMessage}</p>
                 <p className="text-sm text-[#14231F]/70 font-mono">
-                  Coordinates broadcast to all active emergency responders.
+                  Coordinates & vulnerability tags broadcast to rescue commanders.
                 </p>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-                {/* Hazard Type Selector (Capped strictly at 3) */}
+                {/* Hazard Type Selector */}
                 <div>
                   <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1.5">
                     Select Hazard Type *
@@ -131,6 +183,102 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
                   </div>
                 </div>
 
+                {/* Vulnerability Tags Selector (Auto jumps triage queue) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-mono uppercase text-[#14231F]/80 flex items-center gap-1.5">
+                      <HeartHandshake className="w-3.5 h-3.5 text-[#B23A2E]" />
+                      Special Vulnerability Tags (Optional)
+                    </label>
+                    <span className="text-[10px] font-mono text-[#B23A2E] font-semibold">
+                      Auto-Jumps Triage Queue
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {VULNERABILITY_OPTIONS.map(({ id, label }) => {
+                      const isSelected = vulnerabilityTags.includes(id);
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          id={`tag-${id}`}
+                          onClick={() => toggleVulnerabilityTag(id)}
+                          className={`py-1.5 px-2.5 text-left text-xs font-mono rounded border transition-colors flex items-center justify-between ${
+                            isSelected
+                              ? 'bg-[#14231F] text-white border-[#14231F] font-bold'
+                              : 'bg-[#F6F4EF] text-[#14231F]/80 border-[#D8D3C7] hover:border-[#14231F]'
+                          }`}
+                        >
+                          <span>{label}</span>
+                          <span className="text-[10px] font-mono">{isSelected ? '✓' : '+'}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Battery Telemetry (Decision 0.1 / Section 5) */}
+                <div className="p-2.5 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {batteryLevel !== null && batteryLevel <= 15 ? (
+                      <BatteryWarning className="w-4 h-4 text-[#B23A2E] animate-pulse" />
+                    ) : (
+                      <Battery className="w-4 h-4 text-[#14231F]/70" />
+                    )}
+                    <span className="font-mono text-[#14231F]/80">Device Telemetry:</span>
+                  </div>
+                  <div className="font-mono font-semibold text-[11px]">
+                    {batteryLevel !== null ? (
+                      batteryLevel <= 15 ? (
+                        <span className="text-[#B23A2E] font-bold">
+                          ⚡ {batteryLevel}% Battery (CRITICAL &bull; Auto-Urgent Priority)
+                        </span>
+                      ) : (
+                        <span className="text-[#2E6E4E]">
+                          ⚡ {batteryLevel}% Battery
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-[#14231F]/60">
+                        Battery: Unavailable (Desktop / Restricted)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Proxy Distress Reporting (Item 2.1) */}
+                <div className="p-3 bg-[#EFECE4]/60 border border-[#D8D3C7] rounded space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-mono select-none">
+                    <input
+                      type="checkbox"
+                      id="proxy-distress-checkbox"
+                      checked={reportedByProxy}
+                      onChange={(e) => setReportedByProxy(e.target.checked)}
+                      className="rounded border-[#D8D3C7] text-[#14231F] focus:ring-0"
+                    />
+                    <span className="font-bold text-[#14231F] flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-[#C97A2B]" />
+                      Report on behalf of someone else (Proxy SOS)
+                    </span>
+                  </label>
+
+                  {reportedByProxy && (
+                    <div className="pl-5 pt-1 space-y-1 animate-fade-in">
+                      <label className="block text-[11px] font-mono text-[#14231F]/80">
+                        Who needs rescue? (Name, mobility constraints, exact floor/spot) *
+                      </label>
+                      <input
+                        type="text"
+                        required={reportedByProxy}
+                        value={subjectDescription}
+                        onChange={(e) => setSubjectDescription(e.target.value)}
+                        placeholder="e.g. Neighbor Mrs. Joshi (82yo, wheelchair), 2nd floor balcony"
+                        className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* Location Display */}
                 <div className="p-3 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs space-y-1">
                   <div className="flex items-center justify-between">
@@ -151,44 +299,38 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
                   </div>
                 </div>
 
-                {/* Distress Details */}
+                {/* Message / Details */}
                 <div>
-                  <label htmlFor="sos-msg" className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
-                    Situation Details (Optional)
+                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
+                    Distress Details / Situation Description *
                   </label>
                   <textarea
-                    id="sos-msg"
-                    rows={3}
+                    rows={2}
+                    required
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    placeholder="e.g. 2 people stranded on terrace, water level rising rapidly..."
-                    className="w-full p-2.5 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-sm focus:outline-none focus:border-[#14231F]"
+                    placeholder="e.g. Ground floor flooded 4ft, 2 people trapped on roof, urgent medical attention required..."
+                    className="w-full p-2.5 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
                   />
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#D8D3C7]">
+                {/* Dispatch Trigger Actions */}
+                <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#D8D3C7]">
                   <button
                     type="button"
                     onClick={() => setIsOpen(false)}
-                    className="px-4 py-2 text-xs font-medium text-[#14231F]/70 hover:text-[#14231F]"
+                    className="px-4 py-2 text-xs font-medium text-[#14231F]/70"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    id="confirm-sos-btn"
+                    id="confirm-sos-dispatch-btn"
                     disabled={submitting}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-[#B23A2E] hover:bg-[#9E2E23] text-white font-display font-bold text-sm rounded transition-colors disabled:opacity-50"
+                    className="flex items-center gap-2 px-6 py-2.5 bg-[#B23A2E] hover:bg-[#9E2E23] text-white font-display font-bold text-xs rounded tracking-wider uppercase transition-colors disabled:opacity-50"
                   >
-                    {submitting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Broadcasting...</span>
-                      </>
-                    ) : (
-                      <span>TRANSMIT DISTRESS SIGNAL</span>
-                    )}
+                    {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AlertOctagon className="w-3.5 h-3.5" />}
+                    <span>TRANSMIT DISTRESS BEACON</span>
                   </button>
                 </div>
               </form>

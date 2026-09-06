@@ -1,5 +1,5 @@
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -8,16 +8,22 @@ generator client {
 }
 
 model User {
-  id           Int          @id @default(autoincrement())
-  name         String
-  email        String       @unique
-  passwordHash String
-  role         String       @default("CITIZEN") // CITIZEN, VOLUNTEER, ADMIN
-  phone        String?
-  lat          Float?
-  lng          Float?
-  createdAt    DateTime     @default(now())
-  sosRequests  SOSRequest[]
+  id            Int                  @id @default(autoincrement())
+  name          String
+  email         String               @unique
+  passwordHash  String
+  role          String               @default("CITIZEN") // CITIZEN, VOLUNTEER, ADMIN
+  phone         String?
+  lat           Float?
+  lng           Float?
+  trusted       Boolean              @default(false)
+  safetyStatus  String               @default("UNKNOWN") // SAFE, NEEDS_HELP, UNKNOWN
+  safetyUpdatedAt DateTime?
+  createdAt     DateTime             @default(now())
+  sosRequests   SOSRequest[]
+  hazardReports HazardReport[]
+  confirmations HazardConfirmation[]
+  civilianAssets CivilianAsset[]
 }
 
 model Alert {
@@ -33,19 +39,25 @@ model Alert {
 }
 
 model SOSRequest {
-  id                  Int      @id @default(autoincrement())
-  userId              Int?
-  user                User?    @relation(fields: [userId], references: [id])
-  userName            String
-  userPhone           String?
-  lat                 Float
-  lng                 Float
-  message             String
-  hazardType          String   @default("FLOOD")
-  status              String   @default("PENDING") // PENDING, IN_PROGRESS, RESOLVED
-  assignedVolunteerId Int?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                       Int      @id @default(autoincrement())
+  userId                   Int?
+  user                     User?    @relation(fields: [userId], references: [id])
+  userName                 String
+  userPhone                String?
+  lat                      Float
+  lng                      Float
+  message                  String
+  hazardType               String   @default("FLOOD")
+  vulnerabilityTags        String   @default("") // comma-separated: infant,elderly,pregnant,dialysis
+  priority                 String   @default("NORMAL") // NORMAL, URGENT
+  status                   String   @default("PENDING") // PENDING, IN_PROGRESS, RESOLVED
+  assignedVolunteerId      Int?
+  citizenConfirmedResolved Boolean?
+  batteryLevel             Int?
+  reportedByProxy          Boolean  @default(false)
+  subjectDescription       String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 }
 
 model Shelter {
@@ -56,7 +68,96 @@ model Shelter {
   lng              Float
   capacity         Int
   currentOccupancy Int      @default(0)
+  waterOk          Boolean  @default(true)
+  rationsOk        Boolean  @default(true)
+  restroomsOk      Boolean  @default(true)
+  powerOk          Boolean  @default(true)
+  status           String   @default("GREEN") // GREEN, YELLOW, RED
   contact          String
   active           Boolean  @default(true)
+  lastAuditedAt    DateTime @default(now())
   createdAt        DateTime @default(now())
+  supplies         ShelterSupply[]
+}
+
+model HazardReport {
+  id                 Int                  @id @default(autoincrement())
+  userId             Int?
+  user               User?                @relation(fields: [userId], references: [id])
+  userName           String
+  lat                Float
+  lng                Float
+  hazardNote         String
+  severityBenchmark  String?              // ANKLE, KNEE, WAIST, SUBMERGED
+  photoUrl           String?              // Base64 encoded image string
+  confidenceTier     String               @default("GREY") // GREY, AMBER, RED, DISPUTED, RESOLVED
+  confirmationsCount Int                  @default(0)
+  createdAt          DateTime             @default(now())
+  confirmations      HazardConfirmation[]
+}
+
+model HazardConfirmation {
+  id               Int          @id @default(autoincrement())
+  hazardReportId   Int
+  hazardReport     HazardReport @relation(fields: [hazardReportId], references: [id], onDelete: Cascade)
+  confirmingUserId Int
+  confirmingUser   User         @relation(fields: [confirmingUserId], references: [id], onDelete: Cascade)
+  voteType         String       @default("CONFIRM") // CONFIRM, FALSE, RESOLVED
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @default(now()) @updatedAt
+
+  @@unique([hazardReportId, confirmingUserId])
+}
+
+model OfflineSyncLog {
+  id         Int       @id @default(autoincrement())
+  rawPayload String
+  parsedData String    // JSON stringified parsed payload
+  sourceNode String    @default("SMS Gateway")
+  receivedAt DateTime  @default(now())
+  syncedAt   DateTime?
+}
+
+model CivilianAsset {
+  id          Int      @id @default(autoincrement())
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id])
+  ownerName   String
+  contact     String
+  type        String   // BOAT, VEHICLE_4X4, GENERATOR, MEDICAL, HAM_RADIO
+  title       String
+  description String
+  lat         Float
+  lng         Float
+  available   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model MissingPerson {
+  id               Int      @id @default(autoincrement())
+  reportedByName   String
+  contactPhone     String
+  fullName         String
+  age              Int?
+  gender           String?
+  lastSeenLocation String
+  lat              Float?
+  lng              Float?
+  description      String
+  status           String   @default("MISSING") // MISSING, LOCATED, SAFE_AT_SHELTER
+  shelterName      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ShelterSupply {
+  id             Int      @id @default(autoincrement())
+  shelterId      Int
+  shelter        Shelter  @relation(fields: [shelterId], references: [id], onDelete: Cascade)
+  itemName       String
+  quantityNeeded Int      @default(0)
+  quantityOnHand Int      @default(0)
+  unit           String   @default("units")
+  status         String   @default("OK") // OK, LOW, CRITICAL
+  updatedAt      DateTime @default(now())
 }

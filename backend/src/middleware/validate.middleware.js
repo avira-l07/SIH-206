@@ -35,10 +35,13 @@ function validateAlert(req, res, next) {
 
 // Middleware to validate SOS creation
 function validateSOS(req, res, next) {
-  const { userName, lat, lng, message, hazardType } = req.body;
-  if (!userName || typeof lat !== 'number' || typeof lng !== 'number' || !message) {
+  const { lat, lng, message, hazardType } = req.body;
+  const userName = req.body.userName || (req.user ? req.user.name : 'Anonymous Citizen');
+  req.body.userName = userName;
+
+  if (typeof lat !== 'number' || typeof lng !== 'number' || !message) {
     return res.status(400).json({
-      error: 'Missing required SOS fields: userName, lat (number), lng (number), message'
+      error: 'Missing required SOS fields: lat (number), lng (number), message'
     });
   }
   if (hazardType && !HAZARD_TYPES.includes(hazardType)) {

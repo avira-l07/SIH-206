@@ -9,6 +9,7 @@ const REGION_COORDINATES = {
   'Bandra': { lat: 19.0596, lng: 72.8295 },
   'Dadar': { lat: 19.0178, lng: 72.8478 },
   'Chennai': { lat: 13.0827, lng: 80.2707 },
+  'Kutch': { lat: 23.2420, lng: 69.6669 },
   'Delhi NCR': { lat: 28.6139, lng: 77.2090 },
 };
 
@@ -53,7 +54,8 @@ async function getWeatherData(region = 'Mumbai', customLat = null, customLng = n
     'Kurla East': { temp: 27.2, humidity: 95, windSpeed: 45, rain1h: 75, condition: 'Torrential Rain' },
     'Bandra': { temp: 29.0, humidity: 88, windSpeed: 32, rain1h: 18, condition: 'Moderate Rain' },
     'Dadar': { temp: 28.8, humidity: 90, windSpeed: 30, rain1h: 22, condition: 'Rain' },
-    'Chennai': { temp: 34.0, humidity: 70, windSpeed: 20, rain1h: 0, condition: 'Dry / High Heat' },
+    'Chennai': { temp: 43.2, humidity: 18, windSpeed: 28, rain1h: 0, smokeIndex: 75, condition: 'Extreme Heat & Smoke Spike' },
+    'Kutch': { temp: 31.0, humidity: 45, windSpeed: 15, rain1h: 0, seismic: 6.2, condition: 'Major Seismic Event' },
   };
 
   const selected = mockScenarios[region] || {

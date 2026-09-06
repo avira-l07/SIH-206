@@ -10,6 +10,11 @@ const authRoutes = require('./routes/auth.routes');
 const alertRoutes = require('./routes/alert.routes');
 const sosRoutes = require('./routes/sos.routes');
 const shelterRoutes = require('./routes/shelter.routes');
+const hazardRoutes = require('./routes/hazard.routes');
+const offlineRoutes = require('./routes/offline.routes');
+const assetRoutes = require('./routes/asset.routes');
+const missingRoutes = require('./routes/missing.routes');
+const supplyRoutes = require('./routes/supply.routes');
 
 const app = express();
 const server = http.createServer(app);
@@ -72,6 +77,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/sos', sosRoutes);
 app.use('/api/shelters', shelterRoutes);
+app.use('/api/hazards', hazardRoutes);
+app.use('/api/offline', offlineRoutes);
+app.use('/api/assets', assetRoutes);
+app.use('/api/missing-persons', missingRoutes);
+app.use('/api/supplies', supplyRoutes);
 
 // Error Handler
 app.use((err, req, res, next) => {

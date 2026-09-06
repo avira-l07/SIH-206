@@ -50,6 +50,31 @@ function broadcastShelterOccupancy(shelter) {
   }
 }
 
+function broadcastShelterAudit(shelter) {
+  if (ioInstance) {
+    ioInstance.emit('shelter:audit_updated', shelter);
+    ioInstance.emit('shelter:occupancy_changed', shelter);
+  }
+}
+
+function broadcastHazardCreated(report) {
+  if (ioInstance) {
+    ioInstance.emit('hazard:new', report);
+  }
+}
+
+function broadcastHazardConfirmed(report) {
+  if (ioInstance) {
+    ioInstance.emit('hazard:confirmed', report);
+  }
+}
+
+function broadcastHazardTierChanged(report) {
+  if (ioInstance) {
+    ioInstance.emit('hazard:tier_changed', report);
+  }
+}
+
 module.exports = {
   setupSockets,
   getIO,
@@ -57,4 +82,8 @@ module.exports = {
   broadcastSOSCreated,
   broadcastSOSStatus,
   broadcastShelterOccupancy,
+  broadcastShelterAudit,
+  broadcastHazardCreated,
+  broadcastHazardConfirmed,
+  broadcastHazardTierChanged,
 };

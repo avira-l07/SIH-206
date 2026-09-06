@@ -4,6 +4,8 @@ import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
 import MapView from '../components/MapView';
 import AlertBanner from '../components/AlertBanner';
+import TriageKanban from '../components/TriageKanban';
+import OfflineSimulationDrawer from '../components/OfflineSimulationDrawer';
 import {
   ShieldAlert,
   Radio,
@@ -15,6 +17,9 @@ import {
   Loader2,
   CheckCircle2,
   Users,
+  Map,
+  Kanban,
+  FileCheck,
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -24,7 +29,9 @@ export default function AdminDashboard() {
   const [alerts, setAlerts] = useState([]);
   const [shelters, setShelters] = useState([]);
   const [sosList, setSosList] = useState([]);
+  const [hazardReports, setHazardReports] = useState([]);
   const [focusCoords, setFocusCoords] = useState(null);
+  const [viewMode, setViewMode] = useState('MAP'); // 'MAP' or 'KANBAN'
 
   // Broadcast Modal State
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -43,21 +50,24 @@ export default function AdminDashboard() {
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState(null);
 
-  useEffect(() => {
-    async function fetchConsoleData() {
-      try {
-        const [alertsRes, sheltersRes, sosRes] = await Promise.all([
-          api.get('/alerts?activeOnly=false'),
-          api.get('/shelters'),
-          api.get('/sos'),
-        ]);
-        setAlerts(alertsRes.data.alerts || []);
-        setShelters(sheltersRes.data.shelters || []);
-        setSosList(sosRes.data.requests || []);
-      } catch (err) {
-        console.error('Error fetching admin data', err);
-      }
+  const fetchConsoleData = async () => {
+    try {
+      const [alertsRes, sheltersRes, sosRes, hazardsRes] = await Promise.all([
+        api.get('/alerts?activeOnly=false'),
+        api.get('/shelters'),
+        api.get('/sos'),
+        api.get('/hazards').catch(() => ({ data: { reports: [] } })),
+      ]);
+      setAlerts(alertsRes.data.alerts || []);
+      setShelters(sheltersRes.data.shelters || []);
+      setSosList(sosRes.data.requests || []);
+      setHazardReports(hazardsRes.data.reports || []);
+    } catch (err) {
+      console.error('Error fetching admin data', err);
     }
+  };
+
+  useEffect(() => {
     fetchConsoleData();
   }, []);
 
@@ -85,11 +95,37 @@ export default function AdminDashboard() {
       );
     });
 
+    socket.on('shelter:audit_updated', (updatedShelter) => {
+      setShelters((prev) =>
+        prev.map((s) => (s.id === updatedShelter.id ? updatedShelter : s))
+      );
+    });
+
+    socket.on('hazard:new', (newReport) => {
+      setHazardReports((prev) => [newReport, ...prev.filter((r) => r.id !== newReport.id)]);
+    });
+
+    socket.on('hazard:confirmed', (updatedReport) => {
+      setHazardReports((prev) =>
+        prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
+      );
+    });
+
+    socket.on('hazard:tier_changed', (updatedReport) => {
+      setHazardReports((prev) =>
+        prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
+      );
+    });
+
     return () => {
       socket.off('sos:created');
       socket.off('sos:status_changed');
       socket.off('alert:new');
       socket.off('shelter:occupancy_changed');
+      socket.off('shelter:audit_updated');
+      socket.off('hazard:new');
+      socket.off('hazard:confirmed');
+      socket.off('hazard:tier_changed');
     };
   }, [socket]);
 
@@ -151,10 +187,23 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleConfirmHazard = async (reportId) => {
+    try {
+      const res = await api.post(`/hazards/${reportId}/confirm`);
+      setHazardReports((prev) =>
+        prev.map((r) => (r.id === reportId ? res.data.report : r))
+      );
+      alert(`Report confirmed by authority! Current tier: ${res.data.report.confidenceTier}`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to confirm report');
+    }
+  };
+
   const totalCapacity = shelters.reduce((sum, s) => sum + s.capacity, 0);
   const totalOccupied = shelters.reduce((sum, s) => sum + s.currentOccupancy, 0);
   const activeAlertsCount = alerts.filter((a) => a.active).length;
-  const pendingSOSCount = sosList.filter((s) => s.status === 'PENDING').length;
+  const pendingSOSCount = sosList.filter((s) => s.status === 'PENDING' || s.status === 'VERIFIED').length;
+  const verifiedHazardsCount = hazardReports.filter((r) => r.confidenceTier === 'RED').length;
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-61px)]">
@@ -179,6 +228,32 @@ export default function AdminDashboard() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* View Mode Switcher */}
+            <div className="flex items-center bg-[#EFECE4] p-0.5 border border-[#D8D3C7] rounded text-xs font-mono">
+              <button
+                type="button"
+                id="admin-view-map-btn"
+                onClick={() => setViewMode('MAP')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
+                  viewMode === 'MAP' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
+                }`}
+              >
+                <Map className="w-3.5 h-3.5" />
+                <span>INCIDENT MAP</span>
+              </button>
+              <button
+                type="button"
+                id="admin-view-kanban-btn"
+                onClick={() => setViewMode('KANBAN')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
+                  viewMode === 'KANBAN' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
+                }`}
+              >
+                <Kanban className="w-3.5 h-3.5" />
+                <span>TRIAGE KANBAN</span>
+              </button>
+            </div>
+
             <button
               id="open-broadcast-modal-btn"
               onClick={() => setBroadcastOpen(true)}
@@ -215,154 +290,178 @@ export default function AdminDashboard() {
           </div>
 
           <div className="bg-[#FFFFFF] border border-[#D8D3C7] p-3 rounded">
-            <div className="text-[11px] text-[#14231F]/70 font-semibold uppercase">Registered Shelters</div>
-            <div className="text-2xl font-bold text-[#14231F] tabular-nums mt-1">{shelters.length}</div>
-            <div className="text-[10px] text-[#14231F]/60 mt-0.5">Mumbai Municipal Grid</div>
+            <div className="text-[11px] text-[#14231F]/70 font-semibold uppercase">Verified Hazard Ground Truth</div>
+            <div className="text-2xl font-bold text-[#2E6E4E] tabular-nums mt-1">{verifiedHazardsCount}</div>
+            <div className="text-[10px] text-[#14231F]/60 mt-0.5">{hazardReports.length} total reports tracked</div>
           </div>
         </div>
 
-        {/* Map-First Split View */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">
-          {/* Map (65% width) */}
-          <div className="lg:col-span-8 flex flex-col min-h-[500px]">
-            <div className="flex items-center justify-between mb-1 text-xs font-mono text-[#14231F]/70">
-              <span>REGIONAL SITUATIONAL OVERVIEW MAP</span>
-              <span>SHOWING HAZARD RADII, INCIDENT LOCATIONS & SHELTERS</span>
+        {/* Dynamic Body: Map View or Kanban View */}
+        {viewMode === 'KANBAN' ? (
+          <TriageKanban
+            sosList={sosList}
+            currentUser={user}
+            onSOSUpdated={(updated) =>
+              setSosList((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+            }
+            onSelectCoords={(coords) => {
+              setFocusCoords(coords);
+              setViewMode('MAP');
+            }}
+          />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">
+            {/* Map (65% width) */}
+            <div className="lg:col-span-8 flex flex-col min-h-[500px]">
+              <div className="flex items-center justify-between mb-1 text-xs font-mono text-[#14231F]/70">
+                <span>REGIONAL SITUATIONAL OVERVIEW MAP</span>
+                <span>HAZARD RADII, SOS DISTRESS, VERIFIED HAZARD PINS & SHELTERS</span>
+              </div>
+              <MapView
+                alerts={alerts}
+                sosRequests={sosList}
+                shelters={shelters}
+                hazardReports={hazardReports}
+                focusCoords={focusCoords}
+                onConfirmHazard={handleConfirmHazard}
+                userRole="ADMIN"
+              />
             </div>
-            <MapView
-              alerts={alerts}
-              sosRequests={sosList}
-              shelters={shelters}
-              focusCoords={focusCoords}
-              userRole="ADMIN"
-            />
-          </div>
 
-          {/* Admin Tools Side Panel (35% width) */}
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            {/* AI/IoT Risk Engine Simulator Card */}
-            <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
-                <div className="flex items-center gap-2">
-                  <CloudRain className="w-4 h-4 text-[#2E6E4E]" />
-                  <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
-                    AI / IoT Risk Simulator
-                  </h3>
-                </div>
-                <span className="text-[10px] font-mono bg-[#EFECE4] px-1.5 py-0.5 rounded text-[#14231F]/80">
-                  DEMO TOOL
-                </span>
-              </div>
-
-              <p className="text-[11px] text-[#14231F]/70 font-mono">
-                Simulates real-time telemetry from weather station & IoT sensor feeds. Drives the risk engine to auto-trigger alerts.
-              </p>
-
-              <div>
-                <label className="block text-[11px] font-mono text-[#14231F]/80 mb-1">
-                  Target Telemetry Region:
-                </label>
-                <select
-                  value={simRegion}
-                  onChange={(e) => setSimRegion(e.target.value)}
-                  className="w-full p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs font-mono"
-                >
-                  <option value="Kurla East">Kurla East (Torrential Flood Scenario: 75mm/h)</option>
-                  <option value="Mumbai">Mumbai Regional (Heavy Rain Scenario: 42mm/h)</option>
-                  <option value="Bandra">Bandra West (Moderate Rain: 18mm/h)</option>
-                  <option value="Chennai">Chennai Sector (High Heat Risk: 34°C)</option>
-                </select>
-              </div>
-
-              <button
-                type="button"
-                id="trigger-simulation-btn"
-                disabled={simLoading}
-                onClick={handleRunSimulation}
-                className="w-full flex items-center justify-center gap-2 py-2 bg-[#14231F] hover:bg-black text-[#F6F4EF] font-display font-bold text-xs rounded transition-colors disabled:opacity-50"
-              >
-                {simLoading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <>
-                    <Activity className="w-3.5 h-3.5 text-[#2E6E4E]" />
-                    <span>TRIGGER SENSOR RISK EVALUATION</span>
-                  </>
-                )}
-              </button>
-
-              {simResult && (
-                <div className="p-2.5 bg-[#EFECE4] border border-[#D8D3C7] rounded text-xs space-y-1 font-mono">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-[#14231F]">
-                      Risk Score: {simResult.assessment?.score}/100
-                    </span>
-                    <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${
-                        simResult.assessment?.severity === 'CRITICAL'
-                          ? 'bg-[#B23A2E]'
-                          : 'bg-[#C97A2B]'
-                      }`}
-                    >
-                      {simResult.assessment?.severity} // {simResult.assessment?.hazardType}
-                    </span>
+            {/* Admin Tools Side Panel (35% width) */}
+            <div className="lg:col-span-4 flex flex-col gap-4">
+              {/* AI/IoT Risk Engine Simulator Card */}
+              <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
+                  <div className="flex items-center gap-2">
+                    <CloudRain className="w-4 h-4 text-[#2E6E4E]" />
+                    <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
+                      AI / IoT Risk Simulator
+                    </h3>
                   </div>
-                  <p className="text-[11px] text-[#14231F]/80">{simResult.assessment?.reason}</p>
-                  {simResult.alert && (
-                    <div className="text-[10px] text-[#2E6E4E] font-bold pt-1 border-t border-[#D8D3C7]">
-                      ✓ Broadcasted alert #{simResult.alert.id} to emergency network!
-                    </div>
-                  )}
+                  <span className="text-[10px] font-mono bg-[#EFECE4] px-1.5 py-0.5 rounded text-[#14231F]/80">
+                    DEMO TOOL
+                  </span>
                 </div>
-              )}
-            </div>
 
-            {/* Shelter Capacity Quick Management */}
-            <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 flex-1 overflow-hidden flex flex-col">
-              <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
-                <div className="flex items-center gap-2">
-                  <Home className="w-4 h-4 text-[#14231F]" />
-                  <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
-                    Shelter Occupancy Ops
-                  </h3>
+                <p className="text-[11px] text-[#14231F]/70 font-mono">
+                  Simulates real-time telemetry from weather station & IoT sensor feeds. Drives the risk engine to auto-trigger alerts.
+                </p>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-[#14231F]/80 mb-1">
+                    Target Telemetry Region:
+                  </label>
+                  <select
+                    value={simRegion}
+                    onChange={(e) => setSimRegion(e.target.value)}
+                    className="w-full p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs font-mono"
+                  >
+                    <option value="Kurla East">Kurla East (Torrential Flood Scenario: 75mm/h)</option>
+                    <option value="Mumbai">Mumbai Regional (Heavy Rain Advisory: 42mm/h)</option>
+                    <option value="Bandra">Bandra West (Moderate Baseline: 18mm/h)</option>
+                    <option value="Chennai">Chennai Sector (Severe Wildfire & Heat: 43°C, Smoke Spike)</option>
+                    <option value="Kutch">Kutch / Gujarat Rift (Seismic Sensor: 6.2M Earthquake)</option>
+                  </select>
                 </div>
-                <span className="text-[10px] font-mono text-[#14231F]/60">LIVE SYNC</span>
+
+                <button
+                  type="button"
+                  id="trigger-simulation-btn"
+                  disabled={simLoading}
+                  onClick={handleRunSimulation}
+                  className="w-full flex items-center justify-center gap-2 py-2 bg-[#14231F] hover:bg-black text-[#F6F4EF] font-display font-bold text-xs rounded transition-colors disabled:opacity-50"
+                >
+                  {simLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Activity className="w-3.5 h-3.5 text-[#2E6E4E]" />
+                      <span>TRIGGER SENSOR RISK EVALUATION</span>
+                    </>
+                  )}
+                </button>
+
+                {simResult && (
+                  <div className="p-2.5 bg-[#EFECE4] border border-[#D8D3C7] rounded text-xs space-y-1 font-mono">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-[#14231F]">
+                        Risk Score: {simResult.assessment?.score}/100
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${
+                          simResult.assessment?.severity === 'CRITICAL'
+                            ? 'bg-[#B23A2E]'
+                            : 'bg-[#C97A2B]'
+                        }`}
+                      >
+                        {simResult.assessment?.severity} // {simResult.assessment?.hazardType}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#14231F]/80">{simResult.assessment?.reason}</p>
+                    {simResult.alert && (
+                      <div className="text-[10px] text-[#2E6E4E] font-bold pt-1 border-t border-[#D8D3C7]">
+                        ✓ Broadcasted alert #{simResult.alert.id} to emergency network!
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <div className="divide-y divide-[#D8D3C7] overflow-y-auto flex-1 max-h-[220px]">
-                {shelters.slice(0, 5).map((s) => (
-                  <div key={s.id} className="py-2 flex items-center justify-between gap-2 text-xs">
-                    <div className="truncate flex-1">
-                      <div className="font-bold text-[#14231F] truncate">{s.name}</div>
-                      <div className="font-mono text-[11px] text-[#14231F]/70">
-                        {s.currentOccupancy} / {s.capacity} beds
+              {/* Shelter Capacity Quick Management */}
+              <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 flex-1 overflow-hidden flex flex-col">
+                <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
+                  <div className="flex items-center gap-2">
+                    <Home className="w-4 h-4 text-[#14231F]" />
+                    <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
+                      Shelter Occupancy Ops
+                    </h3>
+                  </div>
+                  <span className="text-[10px] font-mono text-[#14231F]/60">LIVE SYNC</span>
+                </div>
+
+                <div className="divide-y divide-[#D8D3C7] overflow-y-auto flex-1 max-h-[220px]">
+                  {shelters.slice(0, 5).map((s) => (
+                    <div key={s.id} className="py-2 flex items-center justify-between gap-2 text-xs">
+                      <div className="truncate flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-1 py-0.2 rounded font-mono text-[9px] font-bold ${
+                            s.status === 'RED' ? 'bg-[#B23A2E] text-white' : s.status === 'YELLOW' ? 'bg-[#C97A2B] text-white' : 'bg-[#2E6E4E] text-white'
+                          }`}>
+                            {s.status}
+                          </span>
+                          <span className="font-bold text-[#14231F] truncate">{s.name}</span>
+                        </div>
+                        <div className="font-mono text-[11px] text-[#14231F]/70 mt-0.5">
+                          {s.currentOccupancy} / {s.capacity} beds
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 font-mono">
+                        <button
+                          type="button"
+                          onClick={() => handleAdjustOccupancy(s.id, -10)}
+                          className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7]"
+                          title="Release 10 beds"
+                        >
+                          -10
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAdjustOccupancy(s.id, 10)}
+                          className="px-2 py-0.5 bg-[#14231F] text-white hover:bg-black rounded"
+                          title="Admit 10 people"
+                        >
+                          +10
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-1 font-mono">
-                      <button
-                        type="button"
-                        onClick={() => handleAdjustOccupancy(s.id, -10)}
-                        className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7]"
-                        title="Release 10 beds"
-                      >
-                        -10
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleAdjustOccupancy(s.id, 10)}
-                        className="px-2 py-0.5 bg-[#14231F] text-white hover:bg-black rounded"
-                        title="Admit 10 people"
-                      >
-                        +10
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Broadcast Alert Modal */}
@@ -496,6 +595,9 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* Offline & SMS Simulation Drawer */}
+      <OfflineSimulationDrawer onDataChanged={fetchConsoleData} />
     </div>
   );
 }
