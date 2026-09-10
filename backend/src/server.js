@@ -26,7 +26,7 @@ const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
-const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 
 // Trust reverse proxies (Render, Railway, Cloudflare, Vercel)
 app.set('trust proxy', 1);
@@ -52,7 +52,7 @@ const corsOptions = {
 
     const matchesPattern = allowedDomainPatterns.some((pattern) => origin.includes(pattern));
 
-    if (isExplicitlyAllowed || matchesPattern || process.env.CORS_ORIGIN === '*') {
+    if (isExplicitlyAllowed || matchesPattern) {
       return callback(null, true);
     }
 
@@ -94,6 +94,33 @@ const authLimiter = rateLimit({
   message: { error: 'Too many auth attempts. Please wait 15 minutes before retrying.' },
 });
 
+// Tight limiter for SOS submissions -- fake SOS flood during real disaster is a safety issue
+const sosLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'SOS rate limit exceeded. If this is a genuine emergency, wait 1 minute and retry.' },
+});
+
+// Hazard report limiter
+const hazardLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Hazard report rate limit exceeded. Please wait before submitting again.' },
+});
+
+// Sync-batch limiter -- each flush is one batch; 10 per 15 min is generous for legit PWA use
+const syncBatchLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Sync-batch rate limit exceeded.' },
+});
+
 app.use(globalLimiter);
 
 // Setup Socket.io with WSS support and polling fallback
@@ -110,10 +137,10 @@ setupSockets(io);
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authLimiter, authRoutes); // tighter limiter on auth
 app.use('/api/alerts', alertRoutes);
-app.use('/api/sos', sosRoutes);
+app.use('/api/sos', sosLimiter, sosRoutes);           // DoS guard: 15 SOS/15min per IP
 app.use('/api/shelters', shelterRoutes);
-app.use('/api/hazards', hazardRoutes);
-app.use('/api/offline', offlineRoutes);
+app.use('/api/hazards', hazardLimiter, hazardRoutes); // DoS guard: 20 hazard/15min per IP
+app.use('/api/offline', offlineRoutes);               // sync-batch sub-route has syncBatchLimiter
 app.use('/api/assets', assetRoutes);
 app.use('/api/missing-persons', missingRoutes);
 app.use('/api/supplies', supplyRoutes);

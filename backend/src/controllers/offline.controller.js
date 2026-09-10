@@ -67,13 +67,17 @@ async function syncOfflineBatch(req, res) {
     for (const item of items) {
       try {
         const idempotencyKey = item.idempotencyKey || item.id || null;
+        // Validate idempotency key to prevent injection into JSON substring match
+        const safeKey = idempotencyKey
+          ? String(idempotencyKey).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 128)
+          : null;
 
         // Idempotency check: prevent duplicate replay if already processed
-        if (idempotencyKey) {
+        if (safeKey) {
           const existingLog = await prisma.offlineSyncLog.findFirst({
             where: {
               parsedData: {
-                contains: `"idempotencyKey":"${idempotencyKey}"`,
+                contains: `"idempotencyKey":"${safeKey}"`,
               },
             },
           });
@@ -82,7 +86,7 @@ async function syncOfflineBatch(req, res) {
               item,
               status: 'DUPLICATE_IGNORED',
               message: 'Item already processed previously under idempotency key',
-              idempotencyKey,
+              idempotencyKey: safeKey,
             });
             continue;
           }
@@ -264,7 +268,6 @@ async function syncOfflineBatch(req, res) {
           }
         } else if (item.type === 'SAFETY_STATUS') {
           const data = item.payload || {};
-          const userId = parseInt(data.userId);
           const safetyStatus = data.safetyStatus;
           const valid = ['SAFE', 'NEEDS_HELP', 'UNKNOWN'];
 
@@ -273,14 +276,20 @@ async function syncOfflineBatch(req, res) {
             continue;
           }
 
-          let targetUser = null;
-          if (userId && !isNaN(userId)) {
-            targetUser = await prisma.user.findUnique({ where: { id: userId } });
-          }
-          if (!targetUser && data.userEmail) {
-            targetUser = await prisma.user.findUnique({ where: { email: String(data.userEmail).toLowerCase() } });
+          // Determine target userId — never allow email-based lookup (IDOR risk).
+          // If caller has a JWT, a CITIZEN may only update their own record.
+          let targetUserId = parseInt(data.userId);
+          if (req.user && req.user.role === 'CITIZEN') {
+            // Authenticated citizen: pin to their own id regardless of payload
+            targetUserId = req.user.id;
           }
 
+          if (!targetUserId || isNaN(targetUserId)) {
+            results.push({ item, status: 'FAILED', error: 'Valid userId is required for safety status sync' });
+            continue;
+          }
+
+          const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
           if (!targetUser) {
             results.push({ item, status: 'FAILED', error: 'No matching user found for safety status sync' });
             continue;
@@ -288,29 +297,26 @@ async function syncOfflineBatch(req, res) {
 
           const user = await prisma.user.update({
             where: { id: targetUser.id },
-            data: {
-              safetyStatus,
-              safetyUpdatedAt: new Date(),
-            },
+            data: { safetyStatus, safetyUpdatedAt: new Date() },
           });
 
-          const log = await prisma.offlineSyncLog.create({
+          const safetyLog = await prisma.offlineSyncLog.create({
             data: {
               rawPayload: JSON.stringify(item.payload),
               parsedData: JSON.stringify({
                 action: 'SAFETY_STATUS_SYNC',
-                idempotencyKey,
-                userId,
+                idempotencyKey: safeKey,
+                userId: targetUser.id,
                 safetyStatus,
                 relayedViaLocalHub: true,
                 queuedAt: item.queuedAt || null,
               }),
-              sourceNode,
+              sourceNode: sanitizedSourceNode,
               syncedAt: new Date(),
             },
           });
 
-          results.push({ item, status: 'SYNCED', record: user, logId: log.id });
+          results.push({ item, status: 'SYNCED', record: { id: user.id, safetyStatus: user.safetyStatus }, logId: safetyLog.id });
         } else if (item.type === 'SMS') {
           const payloadStr = typeof item.payload === 'string' ? item.payload : item.payload?.raw || '';
           const parsed = parseSMSPayload(payloadStr);
