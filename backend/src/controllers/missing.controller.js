@@ -6,8 +6,15 @@ const prisma = require('../db');
 async function getMissingPersons(req, res) {
   try {
     const { query, status } = req.query;
+    const validStatuses = ['MISSING', 'LOCATED', 'SAFE_AT_SHELTER'];
     const where = {};
-    if (status) where.status = status.toUpperCase();
+    if (status) {
+      const normalized = String(status).toUpperCase();
+      if (!validStatuses.includes(normalized)) {
+        return res.status(400).json({ error: `Invalid status filter. Allowed: ${validStatuses.join(', ')}` });
+      }
+      where.status = normalized;
+    }
 
     let reports = await prisma.missingPerson.findMany({
       where,
@@ -15,12 +22,12 @@ async function getMissingPersons(req, res) {
     });
 
     if (query) {
-      const q = query.toLowerCase().trim();
+      const q = String(query).slice(0, 100).toLowerCase().trim();
       reports = reports.filter(
         (p) =>
           p.fullName.toLowerCase().includes(q) ||
           p.lastSeenLocation.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q)
+          (p.description || '').toLowerCase().includes(q)
       );
     }
 
@@ -44,17 +51,34 @@ async function reportMissingPerson(req, res) {
       });
     }
 
+    // Validate phone: only digits, +, -, spaces; min 7, max 20 chars
+    const cleanPhone = String(contactPhone).replace(/[^\d+\-\s]/g, '').trim();
+    if (cleanPhone.length < 7 || cleanPhone.length > 20) {
+      return res.status(400).json({ error: 'contactPhone must be 7–20 valid digits' });
+    }
+
+    // Cap string field lengths
+    if (String(fullName).trim().length > 200) return res.status(400).json({ error: 'fullName too long (max 200)' });
+    if (String(lastSeenLocation).trim().length > 300) return res.status(400).json({ error: 'lastSeenLocation too long (max 300)' });
+    if (description && String(description).length > 2000) return res.status(400).json({ error: 'description too long (max 2000)' });
+
+    // Validate optional coordinates
+    const parsedLat = typeof lat === 'number' ? lat : null;
+    const parsedLng = typeof lng === 'number' ? lng : null;
+    if (parsedLat !== null && (parsedLat < -90 || parsedLat > 90)) return res.status(400).json({ error: 'lat out of range' });
+    if (parsedLng !== null && (parsedLng < -180 || parsedLng > 180)) return res.status(400).json({ error: 'lng out of range' });
+
     const report = await prisma.missingPerson.create({
       data: {
-        reportedByName: reportedByName.trim(),
-        contactPhone: contactPhone.trim(),
-        fullName: fullName.trim(),
+        reportedByName: String(reportedByName).trim(),
+        contactPhone: cleanPhone,
+        fullName: String(fullName).trim(),
         age: age ? parseInt(age) : null,
         gender: gender || null,
-        lastSeenLocation: lastSeenLocation.trim(),
-        description: description || '',
-        lat: typeof lat === 'number' ? lat : null,
-        lng: typeof lng === 'number' ? lng : null,
+        lastSeenLocation: String(lastSeenLocation).trim(),
+        description: description ? String(description).trim() : '',
+        lat: parsedLat,
+        lng: parsedLng,
         status: 'MISSING',
       },
     });

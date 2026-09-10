@@ -135,7 +135,16 @@ async function getMe(req, res) {
 }
 
 // In-memory rate limiting map for safety lookup (Decision 0.3)
+// Cleanup interval prevents unbounded memory growth in long-running processes
 const safetyLookupRateLimits = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 60 * 1000; // 2-minute TTL
+  for (const [key, timestamps] of safetyLookupRateLimits.entries()) {
+    const recent = timestamps.filter((t) => t > cutoff);
+    if (recent.length === 0) safetyLookupRateLimits.delete(key);
+    else safetyLookupRateLimits.set(key, recent);
+  }
+}, 5 * 60 * 1000).unref(); // unref so it doesn't keep the process alive
 function checkLookupRateLimit(userId) {
   const now = Date.now();
   const windowMs = 60 * 1000;
@@ -203,7 +212,11 @@ async function lookupSafetyStatus(req, res) {
       return res.status(400).json({ error: 'Please provide at least 3 characters to search' });
     }
 
-    const cleanQuery = String(query).trim();
+    // Cap query length and strip characters that could abuse Prisma LIKE or trigger regex patterns
+    const cleanQuery = String(query).trim().slice(0, 64).replace(/[^a-zA-Z0-9 +\-_.@]/g, '');
+    if (cleanQuery.length < 3) {
+      return res.status(400).json({ error: 'Query contains too few valid characters (min 3 alphanumeric)' });
+    }
     const foundUser = await prisma.user.findFirst({
       where: {
         OR: [

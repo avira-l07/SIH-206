@@ -13,8 +13,17 @@ async function createHazardReport(req, res) {
   try {
     const { lat, lng, hazardNote, severityBenchmark, photoUrl, userName } = req.body;
 
-    if (typeof lat !== 'number' || typeof lng !== 'number' || !hazardNote) {
-      return res.status(400).json({ error: 'Coordinates (lat, lng) and hazardNote are required' });
+    if (
+      typeof lat !== 'number' || typeof lng !== 'number' ||
+      lat < -90 || lat > 90 || lng < -180 || lng > 180
+    ) {
+      return res.status(400).json({ error: 'Valid coordinates (lat −90–90, lng −180–180) are required' });
+    }
+    if (!hazardNote || typeof hazardNote !== 'string' || hazardNote.trim().length === 0) {
+      return res.status(400).json({ error: 'hazardNote is required' });
+    }
+    if (hazardNote.length > 1000) {
+      return res.status(400).json({ error: 'hazardNote must be 1000 characters or fewer' });
     }
 
     const validBenchmarks = ['ANKLE', 'KNEE', 'WAIST', 'SUBMERGED'];
@@ -22,6 +31,16 @@ async function createHazardReport(req, res) {
       return res.status(400).json({
         error: `severityBenchmark is required. Allowed values: ${validBenchmarks.join(', ')}`,
       });
+    }
+
+    // Validate photoUrl to prevent SSRF / open redirect — only http/https, max 500 chars
+    let sanitizedPhotoUrl = null;
+    if (photoUrl) {
+      const urlStr = String(photoUrl).trim();
+      if (urlStr.length > 500 || !/^https?:\/\//i.test(urlStr)) {
+        return res.status(400).json({ error: 'photoUrl must be a valid http/https URL (max 500 chars)' });
+      }
+      sanitizedPhotoUrl = urlStr;
     }
 
     const userId = req.user ? req.user.id : null;
@@ -35,7 +54,7 @@ async function createHazardReport(req, res) {
         lng,
         hazardNote: hazardNote.trim(),
         severityBenchmark: severityBenchmark.toUpperCase(),
-        photoUrl: photoUrl || null,
+        photoUrl: sanitizedPhotoUrl,
         confidenceTier: 'GREY',
         confirmationsCount: 0,
       },

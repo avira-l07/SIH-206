@@ -14,7 +14,16 @@ const { normalizePhoneNumber } = require('../services/sms.service');
 const { getVapidPublicKey } = require('../services/push.service');
 
 // In-memory sliding window rate limiter per client IP
+// Cleanup interval prevents unbounded memory growth in long-running processes
 const registryRateLimits = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 60 * 1000; // 2-minute TTL
+  for (const [key, timestamps] of registryRateLimits.entries()) {
+    const recent = timestamps.filter((t) => t > cutoff);
+    if (recent.length === 0) registryRateLimits.delete(key);
+    else registryRateLimits.set(key, recent);
+  }
+}, 5 * 60 * 1000).unref(); // unref so it doesn't keep the process alive
 
 function checkRegistryRateLimit(ip) {
   const now = Date.now();
@@ -33,12 +42,12 @@ function checkRegistryRateLimit(ip) {
   return true;
 }
 
+/**
+ * Use req.ip which correctly resolves through reverse proxy (trust proxy is set in server.js).
+ * This prevents clients from spoofing x-forwarded-for to bypass rate limits.
+ */
 function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.socket?.remoteAddress || req.ip || 'unknown-client';
+  return req.ip || req.socket?.remoteAddress || 'unknown-client';
 }
 
 /**

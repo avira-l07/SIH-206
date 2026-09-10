@@ -3,6 +3,8 @@ const http = require('http');
 const os = require('os');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 
 const { setupSockets } = require('./sockets/socketHandler');
@@ -54,16 +56,45 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Permissive fallback for hackathon live judging demo to avoid silent CORS blockage
-    return callback(null, true);
+    // Reject origins that do not match any allowed pattern or explicit whitelist
+    return callback(new Error(`CORS: Origin '${origin}' not allowed`), false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
+// Security headers (CSP, X-Frame-Options, HSTS, etc.)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // allow PWA to fetch assets
+}));
+
 app.use(cors(corsOptions));
-app.use(express.json());
+
+// Cap request body at 16 KB to prevent memory exhaustion attacks
+app.use(express.json({ limit: '16kb' }));
+app.use(express.urlencoded({ extended: false, limit: '16kb' }));
+
+// Global rate limiter: 200 req / 15 min per IP (window can be tuned per-route)
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200,
+  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false,
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes.' },
+  skip: (req) => req.path === '/api/health', // health checks are exempt
+});
+
+// Strict limiter for auth endpoints to prevent credential stuffing
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many auth attempts. Please wait 15 minutes before retrying.' },
+});
+
+app.use(globalLimiter);
 
 // Setup Socket.io with WSS support and polling fallback
 const io = new Server(server, {
@@ -77,7 +108,7 @@ setupSockets(io);
 
 // Wire API Routes
 app.use('/api/health', healthRoutes);
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes); // tighter limiter on auth
 app.use('/api/alerts', alertRoutes);
 app.use('/api/sos', sosRoutes);
 app.use('/api/shelters', shelterRoutes);

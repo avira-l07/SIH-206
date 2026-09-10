@@ -1,5 +1,15 @@
 const { ROLES, HAZARD_TYPES, SEVERITIES, SOS_STATUSES } = require('../constants');
 
+// Shared helper: validate geographic coordinates are within valid ranges
+function isValidCoords(lat, lng) {
+  return (
+    typeof lat === 'number' &&
+    typeof lng === 'number' &&
+    lat >= -90 && lat <= 90 &&
+    lng >= -180 && lng <= 180
+  );
+}
+
 // Middleware to validate user registration & profile updates
 function validateRole(req, res, next) {
   const role = req.body.role || 'CITIZEN';
@@ -25,10 +35,16 @@ function validateAlert(req, res, next) {
       error: `Invalid severity '${severity}'. Allowed: ${SEVERITIES.join(', ')}`
     });
   }
-  if (!region || typeof lat !== 'number' || typeof lng !== 'number' || !message) {
+  if (!region || !isValidCoords(lat, lng) || !message) {
     return res.status(400).json({
-      error: 'Missing required fields: region, lat (number), lng (number), message'
+      error: 'Missing or invalid required fields: region, lat (\u221290 to 90), lng (\u2212180 to 180), message'
     });
+  }
+  if (typeof region === 'string' && region.length > 200) {
+    return res.status(400).json({ error: 'region must be 200 characters or fewer' });
+  }
+  if (typeof message === 'string' && message.length > 2000) {
+    return res.status(400).json({ error: 'message must be 2000 characters or fewer' });
   }
   next();
 }
@@ -39,10 +55,13 @@ function validateSOS(req, res, next) {
   const userName = req.body.userName || (req.user ? req.user.name : 'Anonymous Citizen');
   req.body.userName = userName;
 
-  if (typeof lat !== 'number' || typeof lng !== 'number' || !message) {
+  if (!isValidCoords(lat, lng) || !message) {
     return res.status(400).json({
-      error: 'Missing required SOS fields: lat (number), lng (number), message'
+      error: 'Missing or invalid required SOS fields: lat (\u221290 to 90), lng (\u2212180 to 180), message'
     });
+  }
+  if (typeof message === 'string' && message.length > 2000) {
+    return res.status(400).json({ error: 'message must be 2000 characters or fewer' });
   }
   if (hazardType && !HAZARD_TYPES.includes(hazardType)) {
     return res.status(400).json({

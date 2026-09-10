@@ -1,6 +1,10 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sih26206-disaster-response-jwt-secret-key-2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[FATAL] JWT_SECRET environment variable is not set. Refusing to start without a secure signing key.');
+  process.exit(1);
+}
 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
