@@ -11,16 +11,13 @@ import {
   Radio,
   CloudRain,
   Home,
-  Plus,
   Activity,
   AlertTriangle,
   Loader2,
-  CheckCircle2,
-  Users,
   Map,
   Kanban,
-  FileCheck,
 } from 'lucide-react';
+import ShelterSuppliesModal from '../components/ShelterSuppliesModal';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -32,6 +29,8 @@ export default function AdminDashboard() {
   const [hazardReports, setHazardReports] = useState([]);
   const [focusCoords, setFocusCoords] = useState(null);
   const [viewMode, setViewMode] = useState('MAP'); // 'MAP' or 'KANBAN'
+  const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
+  const [restockAlert, setRestockAlert] = useState(null);
 
   // Broadcast Modal State
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -49,19 +48,22 @@ export default function AdminDashboard() {
   const [simRegion, setSimRegion] = useState('Kurla East');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState(null);
+  const [registryStats, setRegistryStats] = useState({ totalPhones: 0, totalPushSubs: 0 });
 
   const fetchConsoleData = async () => {
     try {
-      const [alertsRes, sheltersRes, sosRes, hazardsRes] = await Promise.all([
+      const [alertsRes, sheltersRes, sosRes, hazardsRes, statsRes] = await Promise.all([
         api.get('/alerts?activeOnly=false'),
         api.get('/shelters'),
         api.get('/sos'),
         api.get('/hazards').catch(() => ({ data: { reports: [] } })),
+        api.get('/registry/stats').catch(() => ({ data: { totalPhones: 0, totalPushSubs: 0 } })),
       ]);
       setAlerts(alertsRes.data.alerts || []);
       setShelters(sheltersRes.data.shelters || []);
       setSosList(sosRes.data.requests || []);
       setHazardReports(hazardsRes.data.reports || []);
+      setRegistryStats(statsRes.data || { totalPhones: 0, totalPushSubs: 0 });
     } catch (err) {
       console.error('Error fetching admin data', err);
     }
@@ -117,12 +119,17 @@ export default function AdminDashboard() {
       );
     });
 
+    socket.on('shelter:restock_needed', (alertData) => {
+      setRestockAlert(alertData);
+    });
+
     return () => {
       socket.off('sos:created');
       socket.off('sos:status_changed');
       socket.off('alert:new');
       socket.off('shelter:occupancy_changed');
       socket.off('shelter:audit_updated');
+      socket.off('shelter:restock_needed');
       socket.off('hazard:new');
       socket.off('hazard:confirmed');
       socket.off('hazard:tier_changed');
@@ -169,21 +176,18 @@ export default function AdminDashboard() {
     }
   };
 
-  // Quick Shelter Occupancy Tweak
+  // Quick Shelter Occupancy Delta (Commutative Event Flow)
   const handleAdjustOccupancy = async (shelterId, delta) => {
-    const shelter = shelters.find((s) => s.id === shelterId);
-    if (!shelter) return;
-    const newOccupancy = Math.max(0, Math.min(shelter.capacity, shelter.currentOccupancy + delta));
-
     try {
-      const res = await api.patch(`/shelters/${shelterId}/occupancy`, {
-        currentOccupancy: newOccupancy,
+      const res = await api.post(`/shelters/${shelterId}/events`, {
+        deltaOccupancy: delta,
+        reason: delta > 0 ? 'Admin quick admit (+10)' : 'Admin quick release (-10)',
       });
       setShelters((prev) =>
         prev.map((s) => (s.id === shelterId ? res.data.shelter : s))
       );
     } catch (err) {
-      console.error('Failed to update shelter occupancy', err);
+      console.error('Failed to apply shelter delta event', err);
     }
   };
 
@@ -211,6 +215,36 @@ export default function AdminDashboard() {
         alerts={alerts}
         onSelectAlert={(a) => setFocusCoords([a.lat, a.lng])}
       />
+
+      {/* Critical Restock Alert Banner */}
+      {restockAlert && (
+        <div className="bg-[#B23A2E] text-white p-3 rounded mx-4 mt-2 flex items-center justify-between gap-3 shadow-md font-mono text-xs animate-pulse">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0" />
+            <div>
+              <span className="font-bold uppercase tracking-wider">CRITICAL SHELTER INVENTORY DEPLETION:</span>{' '}
+              {restockAlert.message || `Shelter #${restockAlert.shelterId} inventory depleted below reserve threshold!`}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                const target = shelters.find((s) => s.id === restockAlert.shelterId) || { id: restockAlert.shelterId, name: `Shelter #${restockAlert.shelterId}` };
+                setViewingSuppliesShelter(target);
+              }}
+              className="px-3 py-1 bg-white text-[#B23A2E] font-bold rounded hover:bg-amber-100 text-xs uppercase"
+            >
+              Authorize Relief Shipment
+            </button>
+            <button
+              onClick={() => setRestockAlert(null)}
+              className="px-2 py-1 text-white/80 hover:text-white text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-7xl w-full mx-auto p-3 sm:p-4 flex-1 flex flex-col gap-4">
         {/* Command Top Strip */}
@@ -324,6 +358,7 @@ export default function AdminDashboard() {
                 hazardReports={hazardReports}
                 focusCoords={focusCoords}
                 onConfirmHazard={handleConfirmHazard}
+                onViewSupplies={(s) => setViewingSuppliesShelter(s)}
                 userRole="ADMIN"
               />
             </div>
@@ -440,6 +475,14 @@ export default function AdminDashboard() {
                       <div className="flex items-center gap-1 font-mono">
                         <button
                           type="button"
+                          onClick={() => setViewingSuppliesShelter(s)}
+                          className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7] text-[10px] font-bold text-[#2E6E4E]"
+                          title="Relief supplies & shipments"
+                        >
+                          📦 SUPPLIES
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleAdjustOccupancy(s.id, -10)}
                           className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7]"
                           title="Release 10 beds"
@@ -485,6 +528,27 @@ export default function AdminDashboard() {
               >
                 ESC / CANCEL
               </button>
+            </div>
+
+            {/* Public Reach Multi-Channel Telemetry */}
+            <div className="mt-3 p-2.5 bg-[#14231F] text-[#F6F4EF] rounded space-y-1.5 font-mono">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-white/70 uppercase">Target Audience:</span>
+                <span className="text-[#4ADE80] font-bold text-[10px]">3 DELIVERY CHANNELS ARMED</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                <div className="bg-white/10 p-1.5 rounded">
+                  <div className="text-sm font-bold text-[#E5A93C]">{registryStats.totalPhones}</div>
+                  <div className="text-[10px] text-white/70">Phones via SMS</div>
+                </div>
+                <div className="bg-white/10 p-1.5 rounded">
+                  <div className="text-sm font-bold text-[#4ADE80]">{registryStats.totalPushSubs}</div>
+                  <div className="text-[10px] text-white/70">Web Push Subscribers</div>
+                </div>
+              </div>
+              <div className="text-[10px] text-white/60 text-center">
+                + Instant WebSocket push to all logged-in field units & citizens
+              </div>
             </div>
 
             <form onSubmit={handleBroadcastAlert} className="mt-4 space-y-3.5">
@@ -598,6 +662,13 @@ export default function AdminDashboard() {
 
       {/* Offline & SMS Simulation Drawer */}
       <OfflineSimulationDrawer onDataChanged={fetchConsoleData} />
+
+      {/* Shelter Supplies & Shipments Modal */}
+      <ShelterSuppliesModal
+        isOpen={Boolean(viewingSuppliesShelter)}
+        onClose={() => setViewingSuppliesShelter(null)}
+        shelter={viewingSuppliesShelter}
+      />
     </div>
   );
 }

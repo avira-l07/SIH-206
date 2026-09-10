@@ -63,63 +63,179 @@ Backend (Node.js/Express)
 - **sos_requests**: `id`, `user_id`, `user_name`, `user_phone`, `lat`, `lng`, `message`, `hazard_type`, `vulnerability_tags`, `batteryLevel` (Int? 0-100), `reportedByProxy` (Boolean), `subjectDescription` (String?), `citizenConfirmedResolved` (Boolean?), `priority` (NORMAL/URGENT), `status` (pending/in_progress/resolved), `assigned_volunteer_id`, `created_at`
 - **shelters**: `id`, `name`, `address`, `lat`, `lng`, `capacity`, `current_occupancy`, `water_ok`, `rations_ok`, `restrooms_ok`, `power_ok`, `status` (green/yellow/red), `contact`, `active`, `last_audited_at`
 
-### Resilience & Verification Tables
+### Resilience, Triage & Verification Tables
+- **sos_requests**: `id`, `user_id`, `user_name`, `user_phone`, `lat`, `lng`, `message`, `hazard_type`, `vulnerability_tags`, `batteryLevel` (Int? 0-100), `reportedByProxy` (Boolean), `subjectDescription` (String?), `citizenConfirmedResolved` (Boolean?), `priority` (NORMAL/URGENT), `status` (PENDING, VERIFIED, EN_ROUTE, ON_SCENE, EVACUATED, HANDED_OVER_TO_MEDICAL, RESOLVED, CANCELLED), `triageTag` (IMMEDIATE/DELAYED/MINOR/DECEASED), `cancelReason` (String?), `assigned_volunteer_id`, `created_at`, `updated_at`
+- **shelters**: `id`, `name`, `address`, `lat`, `lng`, `capacity`, `current_occupancy`, `water_ok`, `rations_ok`, `restrooms_ok`, `power_ok`, `waterLitersRemaining` (Int?), `waterThreshold` (Int?), `rationsUnitsRemaining` (Int?), `rationsThreshold` (Int?), `status` (GREEN/YELLOW/RED), `contact`, `active`, `last_audited_at`
 - **hazard_reports**: `id`, `user_id`, `userName`, `lat`, `lng`, `hazard_note`, `severityBenchmark` (ANKLE/KNEE/WAIST/SUBMERGED), `photo_url` (in-app capture only), `confidence_tier` (GREY/AMBER/RED/DISPUTED/RESOLVED), `confirmations_count`, `created_at`
-- **hazard_confirmations**: `id`, `hazard_report_id`, `confirming_user_id`, `voteType` (CONFIRM/FALSE/RESOLVED), `created_at`, `updated_at` — compound unique constraint `@@unique([hazardReportId, confirmingUserId])` with upsert support (allows vote correction, blocks identical duplicate spam within 2 seconds)
-- **civilian_assets**: `id`, `user_id`, `asset_type` (boat/tractor/generator/medical/etc.), `description`, `lat`, `lng`, `contact`, `active`
-- **supply_requests**: `id`, `shelter_id`, `item_name`, `quantity_needed`, `quantity_fulfilled`, `updated_at`
+- **hazard_confirmations**: `id`, `hazard_report_id`, `confirming_user_id`, `voteType` (CONFIRM/FALSE/RESOLVED), `created_at`, `updated_at` — compound unique constraint `@@unique([hazardReportId, confirmingUserId])` with upsert support
+- **civilian_assets**: `id`, `user_id`, `ownerName`, `contact`, `type`, `assetType` (BOAT/FOUR_BY_FOUR/MEDICAL/EQUIPMENT), `title`, `description`, `lat`, `lng`, `available`, `created_at`
+- **supply_requests**: `id`, `shelter_id`, `item_name`, `quantity_needed`, `quantity_fulfilled`, `unit`, `status` (OK/LOW/CRITICAL), `updated_at`
+- **supply_shipments**: `id`, `shelter_id`, `supply_request_id`, `item_name`, `quantity_claimed`, `quantity_verified`, `logged_by_user_id`, `received_at`
 - **missing_persons**: `id`, `reported_by`, `name`, `age`, `description`, `last_seen_lat`, `last_seen_lng`, `status` (searching/matched/found), `matched_report_id` (nullable)
-- **offline_sync_log** (simulated mesh/SMS ingestion): `id`, `raw_payload` (e.g. `"SHTR 104 F0 W1 B15"`), `parsed_data` (JSON), `source_node` (e.g. `"Mobile Node #4"`), `received_at`, `synced_at`
+- **offline_sync_log**: `id`, `raw_payload`, `parsed_data` (JSON), `source_node`, `received_at`, `synced_at`
 
 ---
 
-## 4. Verification & Risk Logic (rule-based, no ML required)
+## 4. Verification & Risk Logic (rule-based, explainable AI)
 
-**Confidence tier calculation (Sprint 2 multi-vote evaluation order):**
+### 4.1 SOS Ticket 7-State Lifecycle & Ownership State Machine (Sprint 3)
 ```
-1. resolvedVotes (trusted OR >= 2) → RESOLVED (cleared from active hazard view, queryable)
-2. falseVotes    (trusted OR >= 2) → DISPUTED (quarantined from active dispatch, visible as hatched)
-3. confirmVotes  (trusted OR >= 3) → RED (fully verified ground emergency)
-4. confirmVotes  (>= 1)            → AMBER (preliminary verification)
-5. else                            → GREY (unverified, review only)
-```
+[ PENDING ]
+     │ (Admin: PATCH /api/sos/:id/verify)
+     ▼
+[ VERIFIED ] ──────── (Admin solo demo fast path can claim from PENDING)
+     │
+     │ (Volunteer / Admin claim: PATCH /api/sos/:id/assign)
+     │ [Atomic assignment lock; generic /status bypass strictly forbidden]
+     ▼
+[ EN_ROUTE ]
+     │ (Ownership Guard: assigned responder or Admin only)
+     ▼
+[ ON_SCENE ]
+     ├──► [ RESOLVED ] (Direct resolution for minor incidents)
+     ▼
+[ EVACUATED ]
+     │
+     ▼
+[ HANDED_OVER_TO_MEDICAL ]
+     │
+     ▼
+[ RESOLVED ]
+     │ (Citizen closes loop: PATCH /api/sos/:id/citizen-verify)
+     ├── confirmed: true  ──► [ Permanent Safe Closure ]
+     └── confirmed: false ──► [ REOPENED → PENDING + URGENT ]
 
-**Battery null-safe auto-triage (Decision 0.1):**
-```
-isUrgent = (vulnerability_tags.length > 0) || (batteryLevel !== null && batteryLevel <= 15);
-priority = isUrgent ? "URGENT" : "NORMAL";
-```
-*Null safety ensures desktop/unsupported browser sessions (where `batteryLevel === null`) never coerce to 0 and falsely trigger urgent priority.*
-
-**Citizen rescue verification loop (Item 1.3):**
-- Responders mark SOS `RESOLVED`.
-- Citizen dashboard surfaces confirmation card:
-  - `confirmed: true` → `citizenConfirmedResolved: true`, ticket closed permanently.
-  - `confirmed: false` → Reopens to `PENDING`, sets `priority: "URGENT"`, unassigns volunteer, prepends `"[REOPENED BY CITIZEN: RESCUE INCOMPLETE]"` to message, re-alerts commanders.
-- Guarded by authorization: only the original author citizen (or Admin) can invoke `PATCH /api/sos/:id/citizen-verify`.
-
-**Privacy-preserving safety lookup (Decision 0.3):**
-- `GET /api/auth/safety-lookup?query=...` requires authentication (`req.user` must exist).
-- Sliding-window in-memory rate limiting (20 requests/minute per user) blocks account enumeration.
-- Response payload shape: `{ status: "SAFE"|"NEEDS_HELP"|"UNKNOWN", asOf: "<timestamp>" }` — strictly omits queried phone, name, or email to prevent PII exposure.
-
-**Shelter status calculation** (runs on every audit update):
-```
-occupancy_pct = current_occupancy / capacity
-if occupancy_pct >= 0.9 OR NOT water_ok OR NOT rations_ok  → red
-else if occupancy_pct >= 0.7                                → yellow
-else                                                          → green
+* Terminal Cancellation: PATCH /api/sos/:id/cancel requires cancelReason;
+  allowed only by assigned responder or Admin, transitions to CANCELLED.
 ```
 
-These are intentionally simple, explainable rules — call this out in your pitch as "rule-based AI-assisted triage," which is honest and still satisfies most SIH rubrics better than a black-box model you can't explain under Q&A.
+### 4.2 Casualty Triage Tags (Decision 0.2)
+- Responders classify casualties using START triage tags (`PATCH /api/sos/:id/triage-tag`):
+  - `IMMEDIATE` (Red): Life-threatening, immediate extrication required.
+  - `DELAYED` (Yellow): Serious condition, stable for transport.
+  - `MINOR` (Green): Walking wounded.
+  - `DECEASED` (Black): Non-salvageable on ground.
+- Strictly guarded: Citizens and unrelated volunteers receive HTTP 403 Forbidden.
+
+### 4.3 Combined Shelter Readiness Formula & Depletion Alerts (Decision 0.4)
+```
+occupancy_pct = current_occupancy / capacity;
+isNumericRed = (waterLitersRemaining < waterThreshold) || (rationsUnitsRemaining < rationsThreshold);
+isBooleanRed = (water_ok === false) || (rations_ok === false);
+
+if (occupancy_pct >= 0.9 || isNumericRed || isBooleanRed) {
+    status = 'RED';
+} else if (occupancy_pct >= 0.7) {
+    status = 'YELLOW';
+} else {
+    status = 'GREEN';
+}
+```
+- **Role-Scoped Sockets:** Threshold crossings trigger `shelter:restock_needed` scoped exclusively to `role:VOLUNTEER` and `role:ADMIN` socket rooms. Protected from civilian public exposure.
+
+### 4.4 Relief Supply-Demand Gap & Shipment Manifest (Decision 0.5)
+- Standardized single model: `SupplyRequest` tracking `quantityNeeded` and `quantityFulfilled` (no redundant on-hand field).
+- Inbound deliveries logged via `POST /api/supply-shipments`:
+  - Records `quantityClaimed` and `quantityVerified`.
+  - Atomically increments `SupplyRequest.quantityFulfilled`.
+  - Calculates and returns `remainingDeficit = max(0, quantityNeeded - quantityFulfilled)`.
+
+### 4.5 Hazard-Specific Asset Mobilization Matching
+- `GET /api/assets/suggestions?lat=...&lng=...&hazardType=...`:
+  - Hazard matching rule:
+    - `FLOOD` → Prioritizes `BOAT`.
+    - `LANDSLIDE`, `EARTHQUAKE`, `ROAD_BLOCK` → Prioritizes `FOUR_BY_FOUR`, `TRUCK`.
+    - `FIRE`, `MASS_CASUALTY` → Prioritizes `MEDICAL`.
+  - Ranked order: Matching assets listed first, sorted by Haversine distance; closer non-matching assets retained to ensure full mobilization visibility.
 
 ---
 
-## 5. Offline/Mesh Simulation (no real hardware needed)
+## 5. Offline Resilience: Local Relay & Persistent PWA Queue
 
-For the demo, "offline mesh" and "SMS ingestion" are simulated at the application layer:
-- A **"Simulate network outage"** toggle switches the current browser session to local-only mode; new reports/audits queue in local state instead of hitting the API.
-- A small **SMS-syntax parser** (e.g. `SHTR 104 F0 W1 B15` → shelter #104, 0% full, water available, 15 beds free) accepts typed input from a "simulated SMS gateway" box and writes to `offline_sync_log`.
-- On "reconnect," queued items sync and appear with a `synced_at` timestamp; anything in `offline_sync_log` older than 2 hours renders visually faded (staleness indicator) until refreshed.
+During major disasters, municipal power grids fail and cellular infrastructure goes dark. The platform addresses zero-internet and low-bandwidth scenarios using a three-tiered fallback architecture:
 
-This proves the concept and data model without needing a real Bluetooth/Wi-Fi Direct stack or telecom SMS gateway.
+```
+[Cellular / Internet Uplink Lost]
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Local Network Relay Hub (Hub-and-Spoke Mesh)             │
+│    - Presentation laptop or local router acts as emergency  │
+│      Wi-Fi hotspot with zero internet/WAN uplink.           │
+│    - Backend binds to 0.0.0.0; clients auto-resolve LAN IP. │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼ (When even Local Relay is out of range / disconnected)
+┌─────────────────────────────────────────────────────────────┐
+│ 2. Client-Side Persistent Offline Queue (IndexedDB)         │
+│    - PWA Service Worker (sw.js) caches app shell & tiles.   │
+│    - SOS distress calls & ground hazard reports are held    │
+│      locally in IndexedDB with client idempotency keys.     │
+│    - Leaflet/OSM map tiles cached locally (cache-first).    │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼ (On link restoration or entering Local Hub range)
+┌─────────────────────────────────────────────────────────────┐
+│ 3. Monotonic Batch Reconnect Sync & Idempotency Engine      │
+│    - Automatically flushes via `POST /api/offline/sync-batch`│
+│      on browser `online` event or app boot.                 │
+│    - Backend rejects duplicate replay via idempotency keys.  │
+│    - Synchronized beacons broadcast instantly to dispatch.   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Local Network Relay Hub:** When cellular data towers fail, first responders or neighborhood command posts deploy a local Wi-Fi hotspot (with mobile data off) or travel router. Any phone joining the hotspot communicates locally over LAN with the incident coordination server.
+- **Service Worker & Map Tile Caching:** The PWA Service Worker caches the application shell and OpenStreetMap/Carto map tiles within the operational bounding box. This enables cold app boot in airplane mode with zero network access.
+- **IndexedDB Persistent Queue (`offlineQueue.js`):** Intercepts SOS distress transmissions and hazard reports when the network drops. Distress packets are stored in local device storage with unique collision-resistant idempotency keys.
+- **Batch Ingestion & Idempotency:** When any network interface (local relay or restored cellular) reconnects, the client flushes queued items to `/api/offline/sync-batch`. The backend processes items individually in isolated try/catch blocks, enforces idempotency to prevent duplicate database records, and immediately broadcasts alerts to dispatch consoles over WebSockets.
+- **Stage Safety Override:** A manual outage simulation toggle in `OfflineSimulationDrawer.jsx` is retained as a presenter safety net alongside real `navigator.onLine` / fetch-failure interception.
+
+---
+
+## 6. Public Alert Reach: Zero-Account Registry & Multi-Channel Delivery
+
+To close the critical vulnerability where emergency alerts only reach pre-authenticated citizens, the platform implements three unauthenticated, additive broadcast layers:
+
+```
+[Incident Commander / NDMA Admin / Automated Weather Trigger]
+                          │
+                          ▼
+             POST /api/alerts (or /simulate)
+                          │
+       ┌──────────────────┼─────────────────────────┐
+       ▼                  ▼                         ▼
+1. WebSocket Room    2. SMS Gateway            3. Web Push Service
+   (Socket.io)         (Twilio SDK)              (web-push + VAPID)
+       │                  │                         │
+       ▼                  ▼                         ▼
+Logged-in Clients    Public Phone Registry     Service Worker (sw.js)
+(Instant UI update)  (Region-scoped batch)     (Background OS Notification)
+       │                                            │
+       ▼                                            ▼
+Max-Priority Modal                             OS Lock-Screen Alert
+(Audio Siren + Takeover)                       (Persistent Interaction)
+```
+
+### 6.1 Multi-Tier Architecture Components
+1. **Public Unauthenticated Registries (`PhoneRegistration`, `PushSubscription`):**
+   - Decoupled from `User` account model — citizens can subscribe in seconds without registering an account.
+   - **Rate-Limited Endpoints:** `POST /api/registry/phone` and `POST /api/registry/push` employ in-memory sliding window rate limits (10 req/min per IP) to suppress registration spam.
+   - **Strict PII Lockdown:** Raw phone numbers and push keys are never exported or readable via any API endpoint. `GET /api/registry/stats` returns strictly aggregate numerical telemetry (`totalPhones`, `totalPushSubs`).
+2. **Non-Blocking Fan-Out (`alert.controller.js`):**
+   - Alert creation broadcasts instantly over WebSockets and responds immediately (HTTP 201) to the incident commander without waiting for telecom API round-trips.
+   - Asynchronous fan-out executes in the background, matching subscribers by region (or wildcard subscribers).
+3. **Resilient SMS Delivery (`sms.service.js`):**
+   - Batched delivery using `Promise.allSettled` isolates per-number failures (e.g. unverified numbers on Twilio trial accounts or invalid subscriber numbers never block the rest of the batch).
+   - Graceful fallback simulator logs delivery when credentials are unconfigured.
+4. **W3C Web Push & Service Worker (`push.service.js` & `sw.js`):**
+   - Uses VAPID cryptographic signatures (`web-push`).
+   - Active pruning: Automatically purges dead or uninstalled subscriptions on HTTP 410 Gone / 404 responses.
+   - Background push handler in `sw.js` triggers OS-level system notifications with vibration and persistent interaction flags even when the browser tab is closed (Android Chrome / installed PWA).
+5. **In-App Max-Priority Takeover (`AlertBanner.jsx`):**
+   - For users with the app open, receipt of a `CRITICAL` alert triggers a full-screen modal takeover with high-contrast civil defense typography.
+   - Plays a synthesized dual-tone acoustic alert siren (880Hz / 660Hz) via the Web Audio API.
+   - Requires explicit civilian acknowledgment tap ("I ACKNOWLEDGE THIS EMERGENCY ALERT"); does not auto-dismiss.
+
+### 6.2 Production Roadmap: NDMA Sachet & Cell Broadcast Integration
+Web platforms cannot bypass physical OS hardware Do Not Disturb (DND) or silent switches — this is an operating system privilege reserved for native telecom cell broadcasts. In a production national deployment, this platform's response coordination layer is designed to ingest and trigger feeds via **NDMA's Sachet national portal** and CAP (Common Alerting Protocol) gateways for carrier-grade cell broadcast delivery.
+

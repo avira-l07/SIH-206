@@ -5,7 +5,8 @@ const { authenticateToken, requireRole } = require('../middleware/auth.middlewar
 
 router.get('/', shelterController.getAllShelters);
 router.post('/', authenticateToken, requireRole(['ADMIN']), shelterController.createShelter);
-router.patch('/:id/occupancy', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), shelterController.updateOccupancy);
 router.patch('/:id/audit', authenticateToken, shelterController.auditShelter);
+router.post('/:id/events', authenticateToken, shelterController.logShelterEvent);
+router.get('/:id/events', shelterController.getShelterEvents);
 
 module.exports = router;

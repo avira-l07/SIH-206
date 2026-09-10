@@ -4,12 +4,14 @@ import ConnectionBadge from './ConnectionBadge';
 import QuickRoleSwitcher from './QuickRoleSwitcher';
 import CivilianAssetsDrawer from './CivilianAssetsDrawer';
 import MissingPersonsModal from './MissingPersonsModal';
-import { Shield, LogOut, Truck, UserCheck } from 'lucide-react';
+import PublicAlertsModal from './PublicAlertsModal';
+import { Shield, LogOut, Truck, UserCheck, Bell } from 'lucide-react';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const [assetsOpen, setAssetsOpen] = useState(false);
   const [missingOpen, setMissingOpen] = useState(false);
+  const [alertsModalOpen, setAlertsModalOpen] = useState(false);
 
   return (
     <>
@@ -53,6 +55,15 @@ export default function Navbar() {
               <UserCheck className="w-3.5 h-3.5 text-[#B23A2E]" />
               <span className="hidden md:inline">MISSING PERSONS</span>
             </button>
+            <button
+              id="navbar-public-alerts-btn"
+              onClick={() => setAlertsModalOpen(true)}
+              className="px-2.5 py-1 bg-[#B23A2E]/10 hover:bg-[#B23A2E]/20 text-[#B23A2E] rounded border border-[#B23A2E]/30 flex items-center gap-1 text-[11px] font-bold transition-colors"
+              title="Public Alert Registry (SMS & Web Push)"
+            >
+              <Bell className="w-3.5 h-3.5 text-[#B23A2E] animate-pulse" />
+              <span className="hidden md:inline">PUBLIC ALERTS</span>
+            </button>
           </div>
 
           {/* Demo Fast Switcher */}
@@ -86,6 +97,8 @@ export default function Navbar() {
 
       <CivilianAssetsDrawer isOpen={assetsOpen} onClose={() => setAssetsOpen(false)} />
       <MissingPersonsModal isOpen={missingOpen} onClose={() => setMissingOpen(false)} />
+      <PublicAlertsModal isOpen={alertsModalOpen} onClose={() => setAlertsModalOpen(false)} />
     </>
   );
 }
+

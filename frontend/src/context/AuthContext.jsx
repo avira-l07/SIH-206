@@ -4,7 +4,14 @@ import api from '../services/api';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem('sih_user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
   const [token, setToken] = useState(localStorage.getItem('sih_auth_token') || null);
   const [loading, setLoading] = useState(true);
 
@@ -17,6 +24,7 @@ export function AuthProvider({ children }) {
       try {
         const res = await api.get('/auth/me');
         setUser(res.data.user);
+        localStorage.setItem('sih_user', JSON.stringify(res.data.user));
       } catch (err) {
         console.error('Session verification failed, logging out', err);
         logout();
@@ -31,6 +39,7 @@ export function AuthProvider({ children }) {
     const res = await api.post('/auth/login', { email, password });
     const { token: receivedToken, user: receivedUser } = res.data;
     localStorage.setItem('sih_auth_token', receivedToken);
+    localStorage.setItem('sih_user', JSON.stringify(receivedUser));
     setToken(receivedToken);
     setUser(receivedUser);
     return receivedUser;
@@ -40,6 +49,7 @@ export function AuthProvider({ children }) {
     const res = await api.post('/auth/register', userData);
     const { token: receivedToken, user: receivedUser } = res.data;
     localStorage.setItem('sih_auth_token', receivedToken);
+    localStorage.setItem('sih_user', JSON.stringify(receivedUser));
     setToken(receivedToken);
     setUser(receivedUser);
     return receivedUser;
@@ -47,6 +57,7 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     localStorage.removeItem('sih_auth_token');
+    localStorage.removeItem('sih_user');
     setToken(null);
     setUser(null);
   };

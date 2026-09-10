@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Shield, AlertTriangle, ArrowRight, Loader2 } from 'lucide-react';
 
-export default function Register({ onSwitchToLogin }) {
+export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
   const { register } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -149,7 +149,32 @@ export default function Register({ onSwitchToLogin }) {
           </button>
         </form>
 
-        <div className="mt-6 pt-4 border-t border-[#D8D3C7] text-center">
+        {/* Public No-Login Alert Sign-up Link */}
+        <div className="mt-5 p-3 bg-[#B23A2E]/5 border border-[#B23A2E]/20 rounded text-left">
+          <div className="flex items-start gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#B23A2E] animate-ping mt-1.5 flex-shrink-0" />
+            <div>
+              <div className="text-xs font-bold text-[#14231F]">
+                Just looking for emergency alerts?
+              </div>
+              <p className="text-[11px] text-[#14231F]/70 mt-0.5">
+                No need to create an account. Subscribe directly to SMS & Web Push.
+              </p>
+              {onSwitchToPublicAlerts && (
+                <button
+                  type="button"
+                  id="goto-public-alerts-reg-btn"
+                  onClick={onSwitchToPublicAlerts}
+                  className="mt-1.5 inline-flex items-center text-xs font-mono font-bold text-[#B23A2E] hover:underline"
+                >
+                  Public Disaster Alert Registry (No-Login) →
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-[#D8D3C7] text-center">
           <p className="text-xs text-[#14231F]/70">
             Already registered?{' '}
             <button
@@ -165,3 +190,4 @@ export default function Register({ onSwitchToLogin }) {
     </div>
   );
 }
+

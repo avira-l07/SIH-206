@@ -137,6 +137,7 @@ export default function MapView({
   onAssignSOS,
   onResolveSOS,
   onConfirmHazard,
+  onViewSupplies,
   userRole,
 }) {
   const defaultCenter = [userCoords?.lat || 19.0760, userCoords?.lng || 72.8777];
@@ -442,6 +443,15 @@ export default function MapView({
                     <div className="text-[11px] font-mono text-[#14231F]/80">
                       Contact: <a href={`tel:${shelter.contact}`} className="underline">{shelter.contact}</a>
                     </div>
+                  )}
+                  {onViewSupplies && (
+                    <button
+                      type="button"
+                      onClick={() => onViewSupplies(shelter)}
+                      className="w-full mt-2 py-1 bg-[#14231F] hover:bg-black text-white text-[10px] font-mono font-bold rounded"
+                    >
+                      📦 VIEW SUPPLIES & SHIPMENTS
+                    </button>
                   )}
                 </div>
               </Popup>

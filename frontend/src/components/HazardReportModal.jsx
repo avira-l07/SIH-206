@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Camera, MapPin, AlertCircle, CheckCircle2, Loader2, X } from 'lucide-react';
+import { Camera, MapPin, AlertCircle, CheckCircle2, Loader2, X, WifiOff } from 'lucide-react';
 import api from '../services/api';
+import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 
 export default function HazardReportModal({ isOpen, onClose, onReportCreated, defaultCoords }) {
   const [coords, setCoords] = useState(defaultCoords || { lat: 19.0760, lng: 72.8777 });
@@ -10,6 +11,7 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
   const [submitting, setSubmitting] = useState(false);
   const [locating, setLocating] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [isQueuedOffline, setIsQueuedOffline] = useState(false);
 
   if (!isOpen) return null;
 
@@ -50,15 +52,47 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
     }
 
     setSubmitting(true);
-    try {
-      const res = await api.post('/hazards', {
-        lat: coords.lat,
-        lng: coords.lng,
-        hazardNote: hazardNote.trim(),
-        severityBenchmark,
-        photoUrl: photoBase64,
-      });
+    setIsQueuedOffline(false);
 
+    const payload = {
+      lat: coords.lat,
+      lng: coords.lng,
+      hazardNote: hazardNote.trim(),
+      severityBenchmark,
+      photoUrl: photoBase64,
+    };
+
+    // If device is in manual outage mode or browser reports offline, queue into IndexedDB
+    const shouldQueueDirectly =
+      isManualOffline() || (typeof navigator !== 'undefined' && !navigator.onLine);
+
+    if (shouldQueueDirectly) {
+      try {
+        await enqueueAction({
+          type: 'HAZARD',
+          endpoint: '/hazards',
+          payload,
+        });
+        setIsQueuedOffline(true);
+        setSuccessMsg('Offline Outage: Ground hazard report queued locally');
+        setTimeout(() => {
+          setSuccessMsg('');
+          setHazardNote('');
+          setSeverityBenchmark('');
+          setPhotoBase64(null);
+          setIsQueuedOffline(false);
+          onClose();
+        }, 2000);
+        return;
+      } catch (qErr) {
+        console.error('Failed to queue offline hazard report:', qErr);
+      } finally {
+        setSubmitting(false);
+      }
+    }
+
+    try {
+      const res = await api.post('/hazards', payload);
       setSuccessMsg('Report registered under review (Confidence: GREY). Awaiting nearby confirmations.');
       if (onReportCreated) onReportCreated(res.data.report);
 
@@ -70,8 +104,26 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
         onClose();
       }, 1600);
     } catch (err) {
-      console.error('Hazard report submission failed', err);
-      alert(err.response?.data?.error || 'Failed to submit hazard report');
+      console.warn('Live hazard report failed, falling back to local IndexedDB queue:', err);
+      try {
+        await enqueueAction({
+          type: 'HAZARD',
+          endpoint: '/hazards',
+          payload,
+        });
+        setIsQueuedOffline(true);
+        setSuccessMsg('Offline Outage: Ground hazard report queued locally');
+        setTimeout(() => {
+          setSuccessMsg('');
+          setHazardNote('');
+          setSeverityBenchmark('');
+          setPhotoBase64(null);
+          setIsQueuedOffline(false);
+          onClose();
+        }, 2000);
+      } catch (queueErr) {
+        alert(err.response?.data?.error || 'Failed to submit hazard report');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -101,10 +153,22 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
 
         {successMsg ? (
           <div className="py-8 text-center space-y-3">
-            <CheckCircle2 className="w-12 h-12 text-[#2E6E4E] mx-auto animate-bounce" />
-            <p className="font-display font-bold text-base text-[#2E6E4E]">{successMsg}</p>
+            {isQueuedOffline ? (
+              <WifiOff className="w-12 h-12 text-[#C97A2B] mx-auto animate-pulse" />
+            ) : (
+              <CheckCircle2 className="w-12 h-12 text-[#2E6E4E] mx-auto animate-bounce" />
+            )}
+            <p
+              className={`font-display font-bold text-base ${
+                isQueuedOffline ? 'text-[#C97A2B]' : 'text-[#2E6E4E]'
+              }`}
+            >
+              {successMsg}
+            </p>
             <p className="text-xs text-[#14231F]/70 font-mono">
-              Unconfirmed report broadcast to nearby citizens for ground-truth verification.
+              {isQueuedOffline
+                ? 'Stored in IndexedDB. Will auto-sync to local hub or cell network immediately when reconnected.'
+                : 'Unconfirmed report broadcast to nearby citizens for ground-truth verification.'}
             </p>
           </div>
         ) : (

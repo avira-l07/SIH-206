@@ -1,5 +1,6 @@
 require('dotenv').config();
 const http = require('http');
+const os = require('os');
 const express = require('express');
 const cors = require('cors');
 const { Server } = require('socket.io');
@@ -15,11 +16,14 @@ const offlineRoutes = require('./routes/offline.routes');
 const assetRoutes = require('./routes/asset.routes');
 const missingRoutes = require('./routes/missing.routes');
 const supplyRoutes = require('./routes/supply.routes');
+const shipmentRoutes = require('./routes/shipment.routes');
+const registryRoutes = require('./routes/registry.routes');
 
 const app = express();
 const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
+const HOST = process.env.HOST || '0.0.0.0';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 // Trust reverse proxies (Render, Railway, Cloudflare, Vercel)
@@ -82,6 +86,8 @@ app.use('/api/offline', offlineRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/missing-persons', missingRoutes);
 app.use('/api/supplies', supplyRoutes);
+app.use('/api/supply-shipments', shipmentRoutes);
+app.use('/api/registry', registryRoutes);
 
 // Error Handler
 app.use((err, req, res, next) => {
@@ -89,8 +95,23 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error occurred' });
 });
 
-server.listen(PORT, () => {
-  console.log(`🚀 SIH26206 Disaster Management Backend running on port ${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`🚀 SIH26206 Disaster Management Backend running on http://${HOST}:${PORT}`);
   console.log(`📡 WebSocket server listening for real-time dispatch events`);
   console.log(`🩺 Health check accessible at: http://localhost:${PORT}/api/health`);
+
+  // Print LAN IPs for mobile device hotspot/Wi-Fi connection
+  try {
+    const interfaces = os.networkInterfaces();
+    console.log(`🌐 Local Network Relay Hub active. Available on LAN addresses:`);
+    for (const name of Object.keys(interfaces)) {
+      for (const net of interfaces[name]) {
+        if (net.family === 'IPv4' && !net.internal) {
+          console.log(`   👉 http://${net.address}:${PORT} (Connect mobile devices on same Wi-Fi/Hotspot)`);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not enumerate network interfaces:', err.message);
+  }
 });

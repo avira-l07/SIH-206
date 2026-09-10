@@ -1,46 +1,98 @@
 import React, { useState, useEffect } from 'react';
-import { Radio, Wifi, WifiOff, Send, CheckCircle2, AlertCircle, RefreshCw, Terminal, X } from 'lucide-react';
+import {
+  Radio,
+  Wifi,
+  WifiOff,
+  Send,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  Terminal,
+  X,
+  Database,
+  UploadCloud,
+} from 'lucide-react';
 import api from '../services/api';
+import {
+  enqueueAction,
+  getQueuedActions,
+  flushQueue,
+  isManualOffline,
+  setManualOffline,
+  subscribeQueue,
+} from '../services/offlineQueue';
 
 export default function OfflineSimulationDrawer({ onDataChanged }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isOffline, setIsOffline] = useState(false);
-  const [offlineQueue, setOfflineQueue] = useState([]);
+  const [isOffline, setIsOffline] = useState(isManualOffline());
+  const [queuedItems, setQueuedItems] = useState([]);
   const [smsInput, setSmsInput] = useState('SHTR 104 F0 W1 B15');
   const [ingesting, setIngesting] = useState(false);
+  const [flushing, setFlushing] = useState(false);
   const [logs, setLogs] = useState([]);
   const [lastResult, setLastResult] = useState(null);
 
-  // Load sync logs on drawer open
-  useEffect(() => {
-    if (isOpen) {
-      loadLogs();
-    }
-  }, [isOpen]);
+  const refreshQueue = async () => {
+    const items = await getQueuedActions();
+    setQueuedItems(items);
+    setIsOffline(isManualOffline());
+  };
 
   const loadLogs = async () => {
     try {
       const res = await api.get('/offline/logs');
       setLogs(res.data.logs || []);
     } catch (err) {
-      console.error('Failed to load offline logs', err);
+      console.warn('Failed to load offline logs from backend', err.message);
     }
   };
+
+  // Sync with IndexedDB offline queue on mount and drawer open
+  useEffect(() => {
+    refreshQueue();
+    const unsubscribe = subscribeQueue(() => {
+      refreshQueue();
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadLogs();
+      refreshQueue();
+    }
+  }, [isOpen]);
 
   const handleToggleOutage = async () => {
     const nextState = !isOffline;
     setIsOffline(nextState);
+    setManualOffline(nextState);
 
-    // If restoring from offline to online, sync any queued items
-    if (!nextState && offlineQueue.length > 0) {
+    // If restoring connectivity, trigger batch flush
+    if (!nextState) {
+      setFlushing(true);
       try {
-        await api.post('/offline/sync-batch', { items: offlineQueue });
-        setOfflineQueue([]);
+        await flushQueue();
+        await refreshQueue();
         await loadLogs();
         if (onDataChanged) onDataChanged();
       } catch (err) {
-        console.error('Failed to sync offline queue', err);
+        console.error('Failed to sync offline queue on reconnect', err);
+      } finally {
+        setFlushing(false);
       }
+    }
+  };
+
+  const handleManualFlush = async () => {
+    setFlushing(true);
+    try {
+      await flushQueue();
+      await refreshQueue();
+      await loadLogs();
+      if (onDataChanged) onDataChanged();
+    } finally {
+      setFlushing(false);
     }
   };
 
@@ -48,18 +100,25 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
     e?.preventDefault();
     if (!smsInput.trim()) return;
 
-    if (isOffline) {
-      // Queue locally in browser during simulated outage
-      const queuedItem = {
-        type: 'SMS',
-        payload: smsInput.trim(),
-        queuedAt: new Date().toISOString(),
-      };
-      setOfflineQueue((prev) => [...prev, queuedItem]);
-      setLastResult({
-        status: 'QUEUED_OFFLINE',
-        message: 'Network outage active: SMS queued locally in node memory',
-      });
+    if (isOffline || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      // Queue locally into persistent IndexedDB during outage
+      try {
+        await enqueueAction({
+          type: 'SMS',
+          endpoint: '/offline/sms-ingest',
+          payload: smsInput.trim(),
+        });
+        await refreshQueue();
+        setLastResult({
+          status: 'QUEUED_OFFLINE',
+          message: 'Network outage active: SMS telemetry packet saved in IndexedDB storage',
+        });
+      } catch (err) {
+        setLastResult({
+          status: 'ERROR',
+          message: 'Failed to write to local storage: ' + err.message,
+        });
+      }
       return;
     }
 
@@ -87,7 +146,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
         {isOffline && (
           <div className="px-2.5 py-1 bg-[#B23A2E] text-white text-xs font-mono font-bold rounded flex items-center gap-1.5 shadow-md animate-pulse">
             <WifiOff className="w-3.5 h-3.5" />
-            <span>SIMULATED OUTAGE ACTIVE ({offlineQueue.length} QUEUED)</span>
+            <span>STAGE OUTAGE ACTIVE ({queuedItems.length} QUEUED)</span>
           </div>
         )}
 
@@ -98,7 +157,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
           title="Open Offline Mesh & SMS Gateway Simulator"
         >
           <Terminal className="w-3.5 h-3.5 text-[#2E6E4E]" />
-          <span>OFFLINE & SMS TOOLS</span>
+          <span>OFFLINE & RELAY TOOLS {queuedItems.length > 0 ? `(${queuedItems.length})` : ''}</span>
         </button>
       </div>
 
@@ -116,17 +175,17 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                 <Terminal className="w-5 h-5 text-[#14231F]" />
                 <div>
                   <h3 className="font-display font-bold text-sm uppercase">
-                    Offline Mesh & SMS Telemetry Simulator
+                    Local Hub Relay & Offline PWA Tools
                   </h3>
                   <p className="text-[10px] font-mono text-[#14231F]/60">
-                    Application-layer demonstration of low-bandwidth & zero-internet resilience
+                    Zero-internet resilience: Service Worker cache + IndexedDB persistent queue
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="p-1 bg-[#EFECE4] rounded text-xs"
+                className="p-1 bg-[#EFECE4] rounded text-xs hover:bg-[#D8D3C7]"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -142,7 +201,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                     <Wifi className="w-4 h-4 text-[#2E6E4E]" />
                   )}
                   <span className="font-mono text-xs font-bold uppercase text-[#14231F]">
-                    Network Outage Simulation: {isOffline ? 'OFFLINE MODE' : 'ONLINE (NORMAL)'}
+                    Stage Outage Override: {isOffline ? 'OFFLINE (FORCED)' : 'ONLINE (NORMAL)'}
                   </span>
                 </div>
 
@@ -156,23 +215,59 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                       : 'bg-[#B23A2E] text-white hover:bg-[#992c21]'
                   }`}
                 >
-                  {isOffline ? 'RESTORE ONLINE CONNECTIVITY' : 'TRIGGER SIMULATED OUTAGE'}
+                  {isOffline ? 'RESTORE CONNECTIVITY' : 'TRIGGER OUTAGE SIMULATION'}
                 </button>
               </div>
 
               <p className="text-[11px] font-mono text-[#14231F]/70">
                 {isOffline
-                  ? `Device is disconnected from cloud. ${offlineQueue.length} telemetry packet(s) cached locally. Click restore to sync.`
-                  : 'All transactions communicate live over WebSockets and REST APIs.'}
+                  ? `Device is locked offline. ${queuedItems.length} actions held in local IndexedDB storage. Click restore to flush.`
+                  : 'Live network link active. Transactions broadcast immediately via WebSocket and local relay hub.'}
               </p>
             </div>
 
-            {/* Feature 2: SMS Telemetry Gateway Box */}
+            {/* Feature 2: Local IndexedDB Pending Queue Inspection */}
+            {queuedItems.length > 0 && (
+              <div className="p-3 bg-[#C97A2B]/10 border border-[#C97A2B]/40 rounded space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-[#C97A2B]">
+                    <Database className="w-3.5 h-3.5" />
+                    <span>LOCAL INDEXEDDB PERSISTED QUEUE ({queuedItems.length})</span>
+                  </div>
+                  {!isOffline && (
+                    <button
+                      type="button"
+                      onClick={handleManualFlush}
+                      disabled={flushing}
+                      className="px-2.5 py-1 bg-[#14231F] hover:bg-black text-white text-[10px] font-mono font-bold rounded flex items-center gap-1"
+                    >
+                      <UploadCloud className="w-3 h-3" />
+                      <span>{flushing ? 'SYNCING...' : 'FLUSH BATCH NOW'}</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-24 overflow-y-auto divide-y divide-[#D8D3C7] text-[10px] font-mono">
+                  {queuedItems.map((item) => (
+                    <div key={item.id || item.idempotencyKey} className="py-1 flex items-center justify-between">
+                      <span className="font-bold text-[#14231F]">
+                        [{item.type}] {item.idempotencyKey?.substring(0, 16)}...
+                      </span>
+                      <span className="text-[#14231F]/60">
+                        {new Date(item.queuedAt).toLocaleTimeString()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Feature 3: SMS Telemetry Gateway Box */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-mono font-bold uppercase text-[#14231F] flex items-center gap-1.5">
                   <Radio className="w-3.5 h-3.5 text-[#C97A2B]" />
-                  Simulated 2G SMS / Mesh Ingestion Box
+                  Simulated 2G SMS / Ham Radio Telemetry Box
                 </label>
                 <span className="text-[10px] font-mono text-[#14231F]/60">SYNTAX PARSER</span>
               </div>
@@ -191,14 +286,14 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                   onClick={() => setSmsInput('SHTR 101 F95 W0 B2')}
                   className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] rounded text-[10px] font-mono"
                 >
-                  Quick: SHTR 101 (F95% No Water)
+                  Quick: SHTR 101 (F95% Depleted)
                 </button>
                 <button
                   type="button"
                   onClick={() => setSmsInput('SOS 19.0726 72.8845 FLOOD dialysis Patient trapped')}
                   className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] rounded text-[10px] font-mono"
                 >
-                  Quick: SOS (Dialysis Urgent)
+                  Quick: SOS (Dialysis Beacon)
                 </button>
               </div>
 
@@ -250,17 +345,17 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
             {/* Offline Ingestion Audit Logs */}
             <div className="space-y-1.5 pt-2 border-t border-[#D8D3C7]">
               <div className="flex items-center justify-between text-xs font-mono">
-                <span className="font-bold text-[#14231F]">SYNCHRONIZED MESH / SMS AUDIT LOGS</span>
+                <span className="font-bold text-[#14231F]">SYNCHRONIZED AUDIT TRAIL</span>
                 <button
                   type="button"
                   onClick={loadLogs}
                   className="text-[10px] underline flex items-center gap-0.5 text-[#14231F]/70 hover:text-[#14231F]"
                 >
-                  <RefreshCw className="w-3 h-3" /> Refresh
+                  <RefreshCw className="w-3 h-3" /> Refresh Logs
                 </button>
               </div>
 
-              <div className="max-h-36 overflow-y-auto divide-y divide-[#D8D3C7] border border-[#D8D3C7] rounded bg-[#F6F4EF] text-[11px] font-mono">
+              <div className="max-h-28 overflow-y-auto divide-y divide-[#D8D3C7] border border-[#D8D3C7] rounded bg-[#F6F4EF] text-[11px] font-mono">
                 {logs.length === 0 ? (
                   <div className="p-3 text-center text-[#14231F]/50">No sync logs recorded yet</div>
                 ) : (
@@ -270,7 +365,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                         <span className="font-bold text-[#14231F]">{log.sourceNode}</span>
                         <span>{new Date(log.receivedAt).toLocaleTimeString()}</span>
                       </div>
-                      <div className="font-semibold text-[#14231F]">{log.rawPayload}</div>
+                      <div className="font-semibold text-[#14231F] truncate">{log.rawPayload}</div>
                     </div>
                   ))
                 )}

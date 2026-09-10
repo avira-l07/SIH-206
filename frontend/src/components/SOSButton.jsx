@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { AlertOctagon, MapPin, Loader2, CheckCircle2, HeartHandshake, Battery, BatteryWarning, UserCheck, Users } from 'lucide-react';
+import { AlertOctagon, MapPin, Loader2, CheckCircle2, HeartHandshake, Battery, BatteryWarning, Users, WifiOff } from 'lucide-react';
 import api from '../services/api';
+import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 
 const VULNERABILITY_OPTIONS = [
   { id: 'dialysis', label: 'Dialysis Patient' },
@@ -16,33 +17,35 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
   const [vulnerabilityTags, setVulnerabilityTags] = useState([]);
   const [message, setMessage] = useState('');
   const [coords, setCoords] = useState(defaultCoords || { lat: 19.0760, lng: 72.8777 });
+  const [accuracy, setAccuracy] = useState(null);
   const [locating, setLocating] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-
-  // Battery status (Decision 0.1 & Item 1.4)
-  const [batteryLevel, setBatteryLevel] = useState(null);
-  const [batterySupported, setBatterySupported] = useState(false);
-
-  // Proxy distress reporting (Item 2.1)
+  const [isQueuedOffline, setIsQueuedOffline] = useState(false);
   const [reportedByProxy, setReportedByProxy] = useState(false);
   const [subjectDescription, setSubjectDescription] = useState('');
 
-  const readBatteryStatus = () => {
-    if (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function') {
-      navigator.getBattery()
-        .then((bat) => {
-          setBatteryLevel(Math.round(bat.level * 100));
-          setBatterySupported(true);
-        })
-        .catch(() => {
-          setBatteryLevel(null);
-          setBatterySupported(false);
+  // Battery status (Decision 0.1 & Item 1.4)
+  const [batteryLevel, setBatteryLevel] = useState(null);
+
+  const readBatteryStatus = async () => {
+    if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
+      try {
+        const battery = await navigator.getBattery();
+        setBatteryLevel(Math.round(battery.level * 100));
+
+        battery.addEventListener('levelchange', () => {
+          setBatteryLevel(Math.round(battery.level * 100));
         });
-    } else {
-      setBatteryLevel(null);
-      setBatterySupported(false);
+      } catch (err) {
+        console.warn('Battery Status API blocked or unavailable', err);
+      }
     }
   };
+
+  // Read Battery Status API on mount
+  useEffect(() => {
+    readBatteryStatus();
+  }, []);
 
   const acquireLocation = () => {
     if (!navigator.geolocation) return;
@@ -50,13 +53,14 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setAccuracy(pos.coords.accuracy ? Math.round(pos.coords.accuracy) : null);
         setLocating(false);
       },
       (err) => {
         console.warn('Geolocation denied or timed out; using preset regional coordinates', err);
         setLocating(false);
       },
-      { timeout: 8000 }
+      { timeout: 8000, enableHighAccuracy: true }
     );
   };
 
@@ -65,6 +69,7 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
     readBatteryStatus();
     setIsOpen(true);
     setSuccessMessage('');
+    setIsQueuedOffline(false);
   };
 
   const toggleVulnerabilityTag = (id) => {
@@ -81,18 +86,52 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
     }
 
     setSubmitting(true);
-    try {
-      const payload = {
-        hazardType,
-        message: message.trim() || `Emergency distress call for ${hazardType} situation`,
-        lat: coords.lat,
-        lng: coords.lng,
-        vulnerabilityTags: vulnerabilityTags.join(','),
-        batteryLevel,
-        reportedByProxy,
-        subjectDescription: reportedByProxy ? subjectDescription.trim() : null,
-      };
+    setIsQueuedOffline(false);
 
+    const payload = {
+      hazardType,
+      message: message.trim() || `Emergency distress call for ${hazardType} situation`,
+      lat: coords.lat,
+      lng: coords.lng,
+      coordsAccuracy: accuracy,
+      capturedAt: new Date().toISOString(),
+      vulnerabilityTags: vulnerabilityTags.join(','),
+      batteryLevel,
+      reportedByProxy,
+      subjectDescription: reportedByProxy ? subjectDescription.trim() : null,
+    };
+
+    // If device is in manual outage mode or browser reports offline, queue directly into IndexedDB
+    const shouldQueueDirectly =
+      isManualOffline() || (typeof navigator !== 'undefined' && !navigator.onLine);
+
+    if (shouldQueueDirectly) {
+      try {
+        await enqueueAction({
+          type: 'SOS',
+          endpoint: '/sos',
+          payload,
+        });
+        setIsQueuedOffline(true);
+        setSuccessMessage('Offline Outage: SOS Distress Signal Queued Locally');
+        setTimeout(() => {
+          setIsOpen(false);
+          setMessage('');
+          setVulnerabilityTags([]);
+          setReportedByProxy(false);
+          setSubjectDescription('');
+          setSuccessMessage('');
+          setIsQueuedOffline(false);
+        }, 2200);
+        return;
+      } catch (qErr) {
+        console.error('Failed to queue offline SOS:', qErr);
+      } finally {
+        setSubmitting(false);
+      }
+    }
+
+    try {
       const res = await api.post('/sos', payload);
       setSuccessMessage('Emergency broadcast transmitted. Priority dispatch queued.');
       if (onSOSCreated) {
@@ -107,8 +146,27 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
         setSuccessMessage('');
       }, 1800);
     } catch (err) {
-      console.error('SOS submission failed', err);
-      alert(err.response?.data?.error || 'Failed to dispatch SOS signal. Check network.');
+      console.warn('Live SOS dispatch failed, falling back to local IndexedDB queue:', err);
+      try {
+        await enqueueAction({
+          type: 'SOS',
+          endpoint: '/sos',
+          payload,
+        });
+        setIsQueuedOffline(true);
+        setSuccessMessage('Offline Outage: SOS Distress Signal Queued Locally');
+        setTimeout(() => {
+          setIsOpen(false);
+          setMessage('');
+          setVulnerabilityTags([]);
+          setReportedByProxy(false);
+          setSubjectDescription('');
+          setSuccessMessage('');
+          setIsQueuedOffline(false);
+        }, 2200);
+      } catch (queueErr) {
+        alert(err.response?.data?.error || 'Failed to dispatch SOS signal. Check network.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -152,10 +210,22 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
 
             {successMessage ? (
               <div className="py-8 text-center space-y-3">
-                <CheckCircle2 className="w-12 h-12 text-[#2E6E4E] mx-auto animate-bounce" />
-                <p className="font-display font-bold text-lg text-[#2E6E4E]">{successMessage}</p>
+                {isQueuedOffline ? (
+                  <WifiOff className="w-12 h-12 text-[#C97A2B] mx-auto animate-pulse" />
+                ) : (
+                  <CheckCircle2 className="w-12 h-12 text-[#2E6E4E] mx-auto animate-bounce" />
+                )}
+                <p
+                  className={`font-display font-bold text-lg ${
+                    isQueuedOffline ? 'text-[#C97A2B]' : 'text-[#2E6E4E]'
+                  }`}
+                >
+                  {successMessage}
+                </p>
                 <p className="text-sm text-[#14231F]/70 font-mono">
-                  Coordinates & vulnerability tags broadcast to rescue commanders.
+                  {isQueuedOffline
+                    ? 'Stored safely in local IndexedDB. Will auto-sync to local hub or cell network immediately when reconnected.'
+                    : 'Coordinates & vulnerability tags broadcast to rescue commanders.'}
                 </p>
               </div>
             ) : (
@@ -285,14 +355,21 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
                     <span className="font-mono text-[#14231F]/70 flex items-center gap-1">
                       <MapPin className="w-3.5 h-3.5" /> GPS Coordinates:
                     </span>
-                    <button
-                      type="button"
-                      onClick={acquireLocation}
-                      disabled={locating}
-                      className="text-[11px] underline text-[#2E6E4E] hover:opacity-80"
-                    >
-                      {locating ? 'Locating...' : 'Refresh GPS'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {accuracy && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 bg-[#2E6E4E]/10 text-[#2E6E4E] rounded border border-[#2E6E4E]/30 font-semibold">
+                          ±{accuracy}m precision
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={acquireLocation}
+                        disabled={locating}
+                        className="text-[11px] underline text-[#2E6E4E] hover:opacity-80"
+                      >
+                        {locating ? 'Locating...' : 'Refresh GPS'}
+                      </button>
+                    </div>
                   </div>
                   <div className="font-mono tabular-nums text-sm font-semibold text-[#14231F]">
                     {coords.lat.toFixed(4)}° N, {coords.lng.toFixed(4)}° E

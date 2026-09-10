@@ -7,8 +7,9 @@ import AlertBanner from '../components/AlertBanner';
 import TriageKanban from '../components/TriageKanban';
 import HazardConfirmationPrompt from '../components/HazardConfirmationPrompt';
 import OfflineSimulationDrawer from '../components/OfflineSimulationDrawer';
+import { LifeBuoy, MapPin, Phone, Shield, ArrowUpRight, Kanban, Map, Lock, Package, AlertTriangle } from 'lucide-react';
+import ShelterSuppliesModal from '../components/ShelterSuppliesModal';
 import { calculateDistanceKm } from '../services/haversine';
-import { LifeBuoy, AlertCircle, CheckCircle2, Clock, MapPin, Phone, Shield, ArrowUpRight, Kanban, Map, Lock } from 'lucide-react';
 
 export default function VolunteerDashboard() {
   const { user } = useAuth();
@@ -23,6 +24,9 @@ export default function VolunteerDashboard() {
   const [focusCoords, setFocusCoords] = useState(null);
   const [volunteerCoords, setVolunteerCoords] = useState({ lat: 19.0596, lng: 72.8295 }); // Bandra default
   const [actionLoading, setActionLoading] = useState(false);
+  const [assetSuggestions, setAssetSuggestions] = useState({});
+  const [restockAlert, setRestockAlert] = useState(null);
+  const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
 
   const loadData = async () => {
     try {
@@ -51,6 +55,37 @@ export default function VolunteerDashboard() {
       );
     }
   }, []);
+
+  // Proactively query asset suggestions for active SOS incidents
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      const activeCalls = sosList.filter(
+        (s) => s.status === 'PENDING' || s.status === 'VERIFIED' || s.status === 'EN_ROUTE' || s.status === 'IN_PROGRESS'
+      );
+      if (activeCalls.length === 0) return;
+
+      const suggestionsMap = {};
+      await Promise.all(
+        activeCalls.map(async (sos) => {
+          try {
+            const res = await api.get(
+              `/assets/suggestions?lat=${sos.lat}&lng=${sos.lng}&hazardType=${sos.hazardType}`
+            );
+            if (res.data.suggestions && res.data.suggestions.length > 0) {
+              suggestionsMap[sos.id] = res.data.suggestions[0];
+            }
+          } catch (err) {
+            // silent fail
+          }
+        })
+      );
+      setAssetSuggestions((prev) => ({ ...prev, ...suggestionsMap }));
+    };
+
+    if (sosList.length > 0) {
+      fetchSuggestions();
+    }
+  }, [sosList]);
 
   // Real-time socket listeners
   useEffect(() => {
@@ -92,6 +127,10 @@ export default function VolunteerDashboard() {
       );
     });
 
+    socket.on('shelter:restock_needed', (alertData) => {
+      setRestockAlert(alertData);
+    });
+
     return () => {
       socket.off('sos:created');
       socket.off('sos:status_changed');
@@ -100,6 +139,7 @@ export default function VolunteerDashboard() {
       socket.off('hazard:confirmed');
       socket.off('hazard:tier_changed');
       socket.off('shelter:audit_updated');
+      socket.off('shelter:restock_needed');
     };
   }, [socket]);
 
@@ -163,6 +203,36 @@ export default function VolunteerDashboard() {
         onSelectAlert={(a) => setFocusCoords([a.lat, a.lng])}
       />
 
+      {/* Critical Restock Alert Banner */}
+      {restockAlert && (
+        <div className="bg-[#B23A2E] text-white p-3 rounded mx-4 mt-2 flex items-center justify-between gap-3 shadow-md font-mono text-xs animate-pulse">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0" />
+            <div>
+              <span className="font-bold uppercase tracking-wider">CRITICAL SHELTER INVENTORY DEPLETION:</span>{' '}
+              {restockAlert.message || `Shelter #${restockAlert.shelterId} inventory depleted below reserve threshold!`}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                const target = shelters.find((s) => s.id === restockAlert.shelterId) || { id: restockAlert.shelterId, name: `Shelter #${restockAlert.shelterId}` };
+                setViewingSuppliesShelter(target);
+              }}
+              className="px-3 py-1 bg-white text-[#B23A2E] font-bold rounded hover:bg-amber-100 text-xs uppercase"
+            >
+              Log Relief Shipment
+            </button>
+            <button
+              onClick={() => setRestockAlert(null)}
+              className="px-2 py-1 text-white/80 hover:text-white text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl w-full mx-auto p-3 sm:p-4 flex-1 flex flex-col gap-4">
         {/* Header Stats Strip */}
         <div className="bg-[#FFFFFF] border border-[#D8D3C7] p-4 rounded flex flex-wrap items-center justify-between gap-4">
@@ -179,6 +249,17 @@ export default function VolunteerDashboard() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Supplies & Shipments Trigger Button */}
+            <button
+              type="button"
+              id="view-shelter-supplies-btn"
+              onClick={() => setViewingSuppliesShelter(shelters[0] || { id: 101, name: 'Kurla Relief Camp' })}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] text-[#14231F] rounded text-xs font-mono font-bold transition-colors"
+            >
+              <Package className="w-3.5 h-3.5 text-[#2E6E4E]" />
+              <span>SUPPLIES & SHIPMENTS</span>
+            </button>
+
             {/* View Mode Switcher */}
             <div className="flex items-center bg-[#EFECE4] p-0.5 border border-[#D8D3C7] rounded text-xs font-mono">
               <button
@@ -261,6 +342,7 @@ export default function VolunteerDashboard() {
                 onAssignSOS={handleAssignSOS}
                 onResolveSOS={handleResolveSOS}
                 onConfirmHazard={handleConfirmHazard}
+                onViewSupplies={(s) => setViewingSuppliesShelter(s)}
                 userRole="VOLUNTEER"
               />
             </div>
@@ -424,6 +506,38 @@ export default function VolunteerDashboard() {
                           </div>
                         )}
 
+                        {/* Suggested Asset Matching Mobilization */}
+                        {assetSuggestions[sos.id] && (
+                          <div className="p-2 bg-emerald-50 border border-emerald-300 rounded text-[11px] font-mono flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 text-emerald-950">
+                              <Shield className="w-3.5 h-3.5 text-[#2E6E4E] shrink-0" />
+                              <div>
+                                <span className="font-bold text-[#2E6E4E] uppercase">
+                                  {assetSuggestions[sos.id].isMatch ? '★ Priority Asset Match:' : 'Nearest Asset:'}
+                                </span>{' '}
+                                <span className="font-semibold">{assetSuggestions[sos.id].title}</span>{' '}
+                                <span className="text-[9px] px-1 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold uppercase">
+                                  {assetSuggestions[sos.id].assetType || assetSuggestions[sos.id].type}
+                                </span>
+                                {assetSuggestions[sos.id].distanceKm !== null && (
+                                  <span className="text-[#14231F]/70 ml-1">
+                                    • {assetSuggestions[sos.id].distanceKm}km away
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {assetSuggestions[sos.id].contact && (
+                              <a
+                                href={`tel:${assetSuggestions[sos.id].contact}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#2E6E4E] hover:underline font-bold text-[10px] shrink-0 uppercase bg-white px-1.5 py-0.5 border border-emerald-300 rounded"
+                              >
+                                Mobilize ({assetSuggestions[sos.id].ownerName})
+                              </a>
+                            )}
+                          </div>
+                        )}
+
                         {isAssignedToOther && (
                           <div className="text-[10px] font-mono text-[#C97A2B] bg-[#C97A2B]/10 p-1 rounded flex items-center gap-1 border border-[#C97A2B]/30">
                             <Lock className="w-3 h-3" /> Locked to another volunteer
@@ -499,6 +613,13 @@ export default function VolunteerDashboard() {
 
       {/* Offline & SMS Simulation Drawer */}
       <OfflineSimulationDrawer onDataChanged={loadData} />
+
+      {/* Shelter Supplies & Shipments Modal */}
+      <ShelterSuppliesModal
+        isOpen={Boolean(viewingSuppliesShelter)}
+        onClose={() => setViewingSuppliesShelter(null)}
+        shelter={viewingSuppliesShelter}
+      />
     </div>
   );
 }

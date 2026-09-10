@@ -1,0 +1,18 @@
+{
+  "short_name": "DisasterHub",
+  "name": "SIH26206 Disaster Response Hub",
+  "description": "Real-time emergency response, offline SOS triage, and field coordination system",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F6F4EF",
+  "theme_color": "#14231F",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}

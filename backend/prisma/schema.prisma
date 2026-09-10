@@ -46,11 +46,15 @@ model SOSRequest {
   userPhone                String?
   lat                      Float
   lng                      Float
+  coordsAccuracy           Float?
+  capturedAt               DateTime?
   message                  String
   hazardType               String   @default("FLOOD")
   vulnerabilityTags        String   @default("") // comma-separated: infant,elderly,pregnant,dialysis
   priority                 String   @default("NORMAL") // NORMAL, URGENT
-  status                   String   @default("PENDING") // PENDING, IN_PROGRESS, RESOLVED
+  status                   String   @default("PENDING") // PENDING, VERIFIED, EN_ROUTE, ON_SCENE, EVACUATED, HANDED_OVER_TO_MEDICAL, RESOLVED, CANCELLED
+  triageTag                String?  // IMMEDIATE, DELAYED, MINOR, DECEASED
+  cancelReason             String?
   assignedVolunteerId      Int?
   citizenConfirmedResolved Boolean?
   batteryLevel             Int?
@@ -61,23 +65,43 @@ model SOSRequest {
 }
 
 model Shelter {
+  id                    Int              @id @default(autoincrement())
+  name                  String
+  address               String
+  lat                   Float
+  lng                   Float
+  capacity              Int
+  currentOccupancy      Int              @default(0)
+  waterLitersRemaining  Int?
+  waterThreshold        Int              @default(200)
+  rationsUnitsRemaining Int?
+  rationsThreshold      Int              @default(50)
+  waterOk               Boolean          @default(true)
+  rationsOk             Boolean          @default(true)
+  restroomsOk           Boolean          @default(true)
+  powerOk               Boolean          @default(true)
+  status                String           @default("GREEN") // GREEN, YELLOW, RED
+  contact               String
+  active                Boolean          @default(true)
+  lastAuditedAt         DateTime         @default(now())
+  createdAt             DateTime         @default(now())
+  supplies              SupplyRequest[]
+  shipments             SupplyShipment[]
+  events                ShelterEvent[]
+}
+
+model ShelterEvent {
   id               Int      @id @default(autoincrement())
-  name             String
-  address          String
-  lat              Float
-  lng              Float
-  capacity         Int
-  currentOccupancy Int      @default(0)
-  waterOk          Boolean  @default(true)
-  rationsOk        Boolean  @default(true)
-  restroomsOk      Boolean  @default(true)
-  powerOk          Boolean  @default(true)
-  status           String   @default("GREEN") // GREEN, YELLOW, RED
-  contact          String
-  active           Boolean  @default(true)
-  lastAuditedAt    DateTime @default(now())
+  shelterId        Int
+  shelter          Shelter  @relation(fields: [shelterId], references: [id], onDelete: Cascade)
+  deltaOccupancy   Int      @default(0) // e.g. +20 (admitted evacuees), -5 (discharged)
+  deltaWaterLiters Int      @default(0) // e.g. -100 (consumed), +500 (tanker delivery)
+  deltaRations     Int      @default(0) // e.g. -30 (distributed), +200 (crates received)
+  reason           String?  // e.g. "Bus arrival from Sector 4", "Tanker restock"
+  operatorName     String   @default("Field Operator")
+  idempotencyKey   String?  @unique
+  capturedAt       DateTime @default(now())
   createdAt        DateTime @default(now())
-  supplies         ShelterSupply[]
 }
 
 model HazardReport {
@@ -125,6 +149,7 @@ model CivilianAsset {
   ownerName   String
   contact     String
   type        String   // BOAT, VEHICLE_4X4, GENERATOR, MEDICAL, HAM_RADIO
+  assetType   String?  // BOAT, TRUCK, FOUR_BY_FOUR, MEDICAL, DRONE_PILOT, GENERATOR, HAM_RADIO
   title       String
   description String
   lat         Float
@@ -150,14 +175,44 @@ model MissingPerson {
   updatedAt        DateTime @updatedAt
 }
 
-model ShelterSupply {
-  id             Int      @id @default(autoincrement())
-  shelterId      Int
-  shelter        Shelter  @relation(fields: [shelterId], references: [id], onDelete: Cascade)
-  itemName       String
-  quantityNeeded Int      @default(0)
-  quantityOnHand Int      @default(0)
-  unit           String   @default("units")
-  status         String   @default("OK") // OK, LOW, CRITICAL
-  updatedAt      DateTime @default(now())
+model SupplyRequest {
+  id                Int              @id @default(autoincrement())
+  shelterId         Int
+  shelter           Shelter          @relation(fields: [shelterId], references: [id], onDelete: Cascade)
+  itemName          String
+  quantityNeeded    Int              @default(0)
+  quantityFulfilled Int              @default(0)
+  unit              String           @default("units")
+  status            String           @default("OK") // OK, LOW, CRITICAL
+  updatedAt         DateTime         @default(now())
+  shipments         SupplyShipment[]
 }
+
+model SupplyShipment {
+  id               Int            @id @default(autoincrement())
+  shelterId        Int
+  shelter          Shelter        @relation(fields: [shelterId], references: [id], onDelete: Cascade)
+  supplyRequestId  Int?
+  supplyRequest    SupplyRequest? @relation(fields: [supplyRequestId], references: [id], onDelete: SetNull)
+  itemName         String
+  quantityClaimed  Int
+  quantityVerified Int
+  loggedByUserId   Int?
+  receivedAt       DateTime       @default(now())
+}
+
+model PhoneRegistration {
+  id          Int      @id @default(autoincrement())
+  phoneNumber String   @unique
+  region      String?
+  createdAt   DateTime @default(now())
+}
+
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  endpoint  String   @unique
+  keys      String   // stored as JSON string { p256dh, auth }
+  region    String?
+  createdAt DateTime @default(now())
+}
+

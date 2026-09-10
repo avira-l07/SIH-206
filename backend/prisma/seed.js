@@ -7,9 +7,10 @@ async function main() {
   console.log('🌱 Starting database seed...');
 
   // Clear existing data in reverse relation order
+  await prisma.supplyShipment.deleteMany();
+  await prisma.supplyRequest.deleteMany();
   await prisma.civilianAsset.deleteMany();
   await prisma.missingPerson.deleteMany();
-  await prisma.shelterSupply.deleteMany();
   await prisma.hazardConfirmation.deleteMany();
   await prisma.hazardReport.deleteMany();
   await prisma.offlineSyncLog.deleteMany();
@@ -114,6 +115,10 @@ async function main() {
       lng: 72.8295,
       capacity: 350,
       currentOccupancy: 45, // 12% - Green
+      waterLitersRemaining: 1500,
+      waterThreshold: 200,
+      rationsUnitsRemaining: 250,
+      rationsThreshold: 50,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -129,6 +134,10 @@ async function main() {
       lng: 72.8478,
       capacity: 500,
       currentOccupancy: 140, // 28% - Green
+      waterLitersRemaining: 1200,
+      waterThreshold: 200,
+      rationsUnitsRemaining: 400,
+      rationsThreshold: 50,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -144,6 +153,10 @@ async function main() {
       lng: 72.8464,
       capacity: 600,
       currentOccupancy: 210, // 35% - Green
+      waterLitersRemaining: 800,
+      waterThreshold: 200,
+      rationsUnitsRemaining: 300,
+      rationsThreshold: 50,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -159,6 +172,10 @@ async function main() {
       lng: 72.8970,
       capacity: 500,
       currentOccupancy: 380, // 76% - Yellow (Near capacity)
+      waterLitersRemaining: 350,
+      waterThreshold: 200,
+      rationsUnitsRemaining: 120,
+      rationsThreshold: 50,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -174,6 +191,10 @@ async function main() {
       lng: 72.8845,
       capacity: 400,
       currentOccupancy: 388, // 97% - RED (>90% full, critical trigger)
+      waterLitersRemaining: 140, // Critical threshold breach (140L < 200L)
+      waterThreshold: 200,
+      rationsUnitsRemaining: 30, // Critical threshold breach (30 units < 50 units)
+      rationsThreshold: 50,
       waterOk: false, // Critical resource depleted
       rationsOk: true,
       restroomsOk: false,
@@ -189,6 +210,10 @@ async function main() {
       lng: 72.8147,
       capacity: 300,
       currentOccupancy: 60,
+      waterLitersRemaining: 600,
+      waterThreshold: 200,
+      rationsUnitsRemaining: 150,
+      rationsThreshold: 50,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -249,7 +274,7 @@ async function main() {
     },
   });
 
-  // Urgent: Infant + Pregnant
+  // Urgent: Infant + Pregnant (VERIFIED stage)
   const urgentSos2 = await prisma.sOSRequest.create({
     data: {
       userId: citizen.id,
@@ -261,9 +286,46 @@ async function main() {
       hazardType: 'FLOOD',
       vulnerabilityTags: 'infant,pregnant',
       priority: 'URGENT',
-      status: 'PENDING',
+      status: 'VERIFIED',
       batteryLevel: 45,
       reportedByProxy: false,
+    },
+  });
+
+  // En Route SOS (claimed by Volunteer)
+  const enRouteSos = await prisma.sOSRequest.create({
+    data: {
+      userId: citizen.id,
+      userName: 'Anil Jadhav',
+      userPhone: '+91 98205 11223',
+      lat: 19.0650,
+      lng: 72.8800,
+      message: 'Tree fallen on tin shed, family trapped inside. Water at ankle depth.',
+      hazardType: 'FLOOD',
+      vulnerabilityTags: 'trapped',
+      priority: 'NORMAL',
+      status: 'EN_ROUTE',
+      assignedVolunteerId: volunteer.id,
+      batteryLevel: 65,
+    },
+  });
+
+  // On Scene SOS with Casualty Triage Tag
+  const onSceneSos = await prisma.sOSRequest.create({
+    data: {
+      userId: null,
+      userName: 'Ramesh Sawant',
+      userPhone: '+91 98206 33445',
+      lat: 19.0690,
+      lng: 72.8810,
+      message: 'Boat arrived on scene. Rescuing 3 people from submerged shop roof. Severe laceration on one resident.',
+      hazardType: 'FLOOD',
+      vulnerabilityTags: 'elderly',
+      priority: 'URGENT',
+      status: 'ON_SCENE',
+      assignedVolunteerId: volunteer.id,
+      triageTag: 'IMMEDIATE',
+      batteryLevel: 50,
     },
   });
 
@@ -283,7 +345,7 @@ async function main() {
       batteryLevel: 85,
     },
   });
-  console.log('✅ Seeded vulnerability-tagged SOS requests (urgent dialysis, battery 12%, proxy SOS)');
+  console.log('✅ Seeded SOS requests across PENDING, VERIFIED, EN_ROUTE, and ON_SCENE lifecycle stages');
 
   // 5. Seed Hazard Reports across Confidence Tiers (GREY, AMBER, RED, DISPUTED, RESOLVED)
   // Tier 1: GREY (0 confirmations, newly reported, WAIST-deep obstruction)
@@ -418,6 +480,7 @@ async function main() {
         ownerName: 'Capt. Rajesh Mehra',
         contact: '+91 98205 99881',
         type: 'BOAT',
+        assetType: 'BOAT',
         title: '8-Person Inflatable Zodiac Rescue Boat with Outboard Motor',
         description: 'Stationed near Kurla Mithi canal. Available immediately for water rescue and evacuation.',
         lat: 19.0728,
@@ -428,6 +491,7 @@ async function main() {
         ownerName: 'Devendra Sawant',
         contact: '+91 98210 44321',
         type: 'VEHICLE_4X4',
+        assetType: 'FOUR_BY_FOUR',
         title: 'Mahindra Thar 4x4 with 9500lb Snorkel Winch',
         description: 'Equipped to tow stranded ambulances and navigate through 3-foot flood water.',
         lat: 19.0610,
@@ -438,6 +502,7 @@ async function main() {
         ownerName: 'Sunita Rao',
         contact: '+91 98330 12111',
         type: 'GENERATOR',
+        assetType: 'GENERATOR',
         title: '15 kVA Heavy-Duty Silent Diesel Generator',
         description: 'Can power oxygen concentrators and shelter lighting during grid blackout.',
         lat: 19.0190,
@@ -448,6 +513,7 @@ async function main() {
         ownerName: 'Dr. Ananya Sen (MD Trauma)',
         contact: '+91 98700 88776',
         type: 'MEDICAL',
+        assetType: 'MEDICAL',
         title: 'Off-Duty Emergency Trauma Physician',
         description: 'Triage specialist carrying field suture kit, emergency insulin, and anti-venom.',
         lat: 19.0400,
@@ -458,6 +524,7 @@ async function main() {
         ownerName: 'K. Ramakrishnan (VU2XYZ)',
         contact: '+91 98190 33445',
         type: 'HAM_RADIO',
+        assetType: 'HAM_RADIO',
         title: 'Licensed Amateur Radio Operator (VHF/UHF Repeater Station)',
         description: 'Independent solar battery backup for zero-grid municipal emergency comms.',
         lat: 19.0550,
@@ -466,7 +533,7 @@ async function main() {
       },
     ],
   });
-  console.log('✅ Seeded civilian volunteer assets & skill mobilization pool');
+  console.log('✅ Seeded civilian volunteer assets with explicit assetTypes (BOAT, FOUR_BY_FOUR, GENERATOR, MEDICAL, HAM_RADIO)');
 
   // 8. Seed Missing Persons Registry (text-based matching)
   await prisma.missingPerson.createMany({
@@ -500,54 +567,77 @@ async function main() {
   });
   console.log('✅ Seeded missing persons registry with intake match');
 
-  // 9. Seed Shelter Supply-Demand Gap Inventory
+  // 9. Seed Shelter Supply Requests & Supply Shipments (SupplyRequest & SupplyShipment)
   const seededShelters = await prisma.shelter.findMany({ take: 2 });
   if (seededShelters.length >= 2) {
-    await prisma.shelterSupply.createMany({
-      data: [
-        {
-          shelterId: seededShelters[0].id,
-          itemName: 'Baby Formula & Infant Cereal',
-          quantityNeeded: 60,
-          quantityOnHand: 10,
-          unit: 'tins',
-          status: 'LOW',
-        },
-        {
-          shelterId: seededShelters[0].id,
-          itemName: 'Refrigerated Insulin Vials (100 IU)',
-          quantityNeeded: 25,
-          quantityOnHand: 0,
-          unit: 'vials',
-          status: 'CRITICAL',
-        },
-        {
-          shelterId: seededShelters[0].id,
-          itemName: 'Packaged Mineral Water (20L Cans)',
-          quantityNeeded: 150,
-          quantityOnHand: 30,
-          unit: 'cans',
-          status: 'LOW',
-        },
-        {
-          shelterId: seededShelters[1].id,
-          itemName: 'Clean Drinking Water Bottles',
-          quantityNeeded: 100,
-          quantityOnHand: 100,
-          unit: 'crates',
-          status: 'OK',
-        },
-        {
-          shelterId: seededShelters[1].id,
-          itemName: 'Thermal Emergency Blankets',
-          quantityNeeded: 80,
-          quantityOnHand: 75,
-          unit: 'blankets',
-          status: 'OK',
-        },
-      ],
+    const sr1 = await prisma.supplyRequest.create({
+      data: {
+        shelterId: seededShelters[0].id,
+        itemName: 'Baby Formula & Infant Cereal',
+        quantityNeeded: 60,
+        quantityFulfilled: 10,
+        unit: 'tins',
+        status: 'LOW',
+      },
     });
-    console.log('✅ Seeded shelter supply-demand gap matrix');
+
+    await prisma.supplyRequest.create({
+      data: {
+        shelterId: seededShelters[0].id,
+        itemName: 'Refrigerated Insulin Vials (100 IU)',
+        quantityNeeded: 25,
+        quantityFulfilled: 0,
+        unit: 'vials',
+        status: 'CRITICAL',
+      },
+    });
+
+    await prisma.supplyRequest.create({
+      data: {
+        shelterId: seededShelters[0].id,
+        itemName: 'Packaged Mineral Water (20L Cans)',
+        quantityNeeded: 150,
+        quantityFulfilled: 30,
+        unit: 'cans',
+        status: 'LOW',
+      },
+    });
+
+    await prisma.supplyRequest.create({
+      data: {
+        shelterId: seededShelters[1].id,
+        itemName: 'Clean Drinking Water Bottles',
+        quantityNeeded: 100,
+        quantityFulfilled: 100,
+        unit: 'crates',
+        status: 'OK',
+      },
+    });
+
+    await prisma.supplyRequest.create({
+      data: {
+        shelterId: seededShelters[1].id,
+        itemName: 'Thermal Emergency Blankets',
+        quantityNeeded: 80,
+        quantityFulfilled: 75,
+        unit: 'blankets',
+        status: 'OK',
+      },
+    });
+
+    // Seed sample SupplyShipment
+    await prisma.supplyShipment.create({
+      data: {
+        shelterId: seededShelters[0].id,
+        supplyRequestId: sr1.id,
+        itemName: 'Baby Formula & Infant Cereal',
+        quantityClaimed: 10,
+        quantityVerified: 10,
+        loggedByUserId: volunteer.id,
+      },
+    });
+
+    console.log('✅ Seeded shelter supply requests & sample verified supply shipment');
   }
 
   console.log('🎉 Database seeding completed successfully!');

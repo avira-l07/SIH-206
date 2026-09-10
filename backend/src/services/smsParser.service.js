@@ -1,7 +1,7 @@
 const prisma = require('../db');
-const { computeShelterStatus } = require('../controllers/shelter.controller');
+const { logShelterEventInternal } = require('../controllers/shelter.controller');
 const { formatSOS } = require('../controllers/sos.controller');
-const { broadcastShelterAudit, broadcastSOSCreated } = require('../sockets/socketHandler');
+const { broadcastSOSCreated } = require('../sockets/socketHandler');
 
 /**
  * Parses fixed-syntax simulated SMS telemetry payloads:
@@ -105,7 +105,7 @@ function parseSMSPayload(payload = '') {
 /**
  * Applies the parsed SMS command directly through the platform services
  */
-async function applyParsedPayload(parsedResult, sourceNode = 'SMS Gateway') {
+async function applyParsedPayload(parsedResult, sourceNode = 'SMS Gateway', extraMeta = {}) {
   if (!parsedResult.success) {
     throw new Error(parsedResult.error);
   }
@@ -118,38 +118,41 @@ async function applyParsedPayload(parsedResult, sourceNode = 'SMS Gateway') {
       throw new Error(`Shelter ID #${data.shelterId} not found in municipal registry`);
     }
 
-    let newOccupancy = shelter.currentOccupancy;
+    let targetOccupancy = shelter.currentOccupancy;
     if (data.bedsFree != null) {
-      newOccupancy = Math.max(0, shelter.capacity - data.bedsFree);
+      targetOccupancy = Math.max(0, shelter.capacity - data.bedsFree);
     } else if (data.occupancyPct != null) {
-      newOccupancy = Math.round((data.occupancyPct / 100) * shelter.capacity);
+      targetOccupancy = Math.round((data.occupancyPct / 100) * shelter.capacity);
     }
 
-    const newWater = data.waterOk != null ? data.waterOk : shelter.waterOk;
-    const newStatus = computeShelterStatus(newOccupancy, shelter.capacity, newWater, shelter.rationsOk);
+    const deltaOccupancy = targetOccupancy - shelter.currentOccupancy;
 
-    const updated = await prisma.shelter.update({
-      where: { id: data.shelterId },
-      data: {
-        currentOccupancy: newOccupancy,
-        waterOk: newWater,
-        status: newStatus,
-        lastAuditedAt: new Date(),
-      },
+    // Apply delta and optional waterOk via single internal event-logging write path
+    const { event, shelter: updated } = await logShelterEventInternal({
+      shelterId: data.shelterId,
+      deltaOccupancy,
+      waterOk: typeof data.waterOk === 'boolean' ? data.waterOk : null,
+      reason: `SMS Telemetry Ingestion: ${raw}`,
+      operatorName: sourceNode || 'SMS Gateway',
     });
 
     // Log to offline sync log
     const log = await prisma.offlineSyncLog.create({
       data: {
         rawPayload: raw,
-        parsedData: JSON.stringify({ action: 'SHELTER_AUDIT', ...data, appliedStatus: newStatus }),
+        parsedData: JSON.stringify({
+          action: 'SHELTER_AUDIT',
+          ...data,
+          appliedStatus: updated.status,
+          eventId: event.id,
+          ...extraMeta,
+        }),
         sourceNode,
         syncedAt: new Date(),
       },
     });
 
-    broadcastShelterAudit(updated);
-    return { type: 'SHELTER_AUDIT', record: updated, log };
+    return { type: 'SHELTER_AUDIT', record: updated, event, log };
   }
 
   if (type === 'SOS_TRIGGER') {
@@ -174,7 +177,7 @@ async function applyParsedPayload(parsedResult, sourceNode = 'SMS Gateway') {
     const log = await prisma.offlineSyncLog.create({
       data: {
         rawPayload: raw,
-        parsedData: JSON.stringify({ action: 'SOS_TRIGGER', ...data, sosId: sos.id }),
+        parsedData: JSON.stringify({ action: 'SOS_TRIGGER', ...data, sosId: sos.id, ...extraMeta }),
         sourceNode,
         syncedAt: new Date(),
       },

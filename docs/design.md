@@ -65,12 +65,32 @@ This is an emergency-response tool used in stressful, time-critical moments - by
 **Vulnerability tag chip** (on SOS cards)
 - Small outlined chip, text-only label ("Dialysis patient," "Infant," "Elderly"), ink-colored border — deliberately not red/alarming on its own, since the *position* in the triage queue (pinned to top) carries the urgency, not the chip color. Reserve `--critical` for the SOS status itself.
 
-**Triage Kanban board**
-- Four columns (Reported → Verified → Dispatched → Rescued) using `--surface` column backgrounds and `--card` for individual request cards — consistent with the existing flat, non-shadowed card style elsewhere in the product.
-- Urgent (vulnerability-tagged) cards get a left-edge accent bar in `--critical`, not a full-card highlight — keeps the "severity is the only loud thing" principle intact even on a busier screen.
+**Triage Kanban Board (Sprint 3 Operator Optimization)**
+- Five distinct operational columns using `--surface` backgrounds and `--card` for individual cards:
+  1. `1. REPORTED`: Incoming citizen distress signals (`PENDING`). Features an explicit control-room **"VERIFY TICKET"** action (Admin-only).
+  2. `2. VERIFIED`: Command-verified dispatch-ready incidents. Plain volunteers can claim and accept dispatch (`EN_ROUTE`).
+  3. `3. EN ROUTE / ON SCENE`: Field responders deployed and on ground (`EN_ROUTE`, `ON_SCENE`).
+  4. `4. EVACUATED / HANDOVER`: Extrication completed, handed over to field medical ambulances (`EVACUATED`, `HANDED_OVER_TO_MEDICAL`).
+  5. `5. RESCUED / RESOLVED`: Successful rescue closure (`RESOLVED`), awaiting citizen confirmation loop.
+- **Ownership guards**: Advance buttons (`Advance → On Scene`, `Evacuated`, `Medical Handover`, `Rescued`) are locked to the assigned responder or Admin. Unassigned volunteers see lock badges.
+- **Cancellation Pattern**: Requires an inline modal with a mandatory non-empty text justification (`cancelReason`). Moves ticket to terminal `CANCELLED` state.
 
-**"I Have / I Can" civilian asset pins** (stretch feature)
-- Distinct icon shape (not a dot) so responders never confuse a civilian-asset pin with a hazard or SOS pin at a glance — use a simple outlined shape in `--ink`, not a status color, since availability isn't a severity signal.
+**Casualty START Triage Tag Tokens**
+- `IMMEDIATE`: `--critical` (`#B23A2E`) background with white text — Life-threatening injury requiring immediate field surgical extrication.
+- `DELAYED`: `--watch` (`#C97A2B`) background with white text — Serious injury, stable for delayed tactical transit.
+- `MINOR`: `--safe` (`#2E6E4E`) background with white text — Walking wounded.
+- `DECEASED`: `--ink` (`#14231F`) background with white text — Non-salvageable on ground.
+
+**Relief Supply-Demand Gap & Shipment Manifest Component**
+- Tabbed interface switching between:
+  - **Supply Gaps**: Table of item needs, quantity fulfilled, and remaining deficit with instant status badges (`CRITICAL SHORTAGE`, `DEFICIT`, `SUFFICIENT`).
+  - **Verified Shipments**: Transparent manifest of inbound shipments showing quantity claimed vs verified on ground with receipt timestamp.
+- Quick verification buttons (+10, +50, or custom shipment modal) for rapid logistics logging.
+
+**Hazard-Specific Civilian Asset Mobilization Chips**
+- On volunteer dispatch cards, shows suggested nearby assets prioritized by type matching:
+  - Flood incidents highlight `BOAT` assets first; Landslide incidents highlight `4x4` and `TRUCK` assets first; Mass casualty incidents highlight `MEDICAL` assets first.
+  - Features owner name, distance in km, and immediate click-to-call mobilization button.
 
 ---
 

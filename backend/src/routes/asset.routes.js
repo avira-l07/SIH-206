@@ -16,6 +16,7 @@ function optionalAuth(req, res, next) {
 }
 
 router.get('/', assetController.getAssets);
+router.get('/suggestions', assetController.getAssetSuggestions);
 router.post('/', optionalAuth, assetController.registerAsset);
 router.patch('/:id/status', authenticateToken, assetController.toggleAssetAvailability);
 

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Search, CheckCircle2, AlertCircle, HelpCircle, Loader2, Lock } from 'lucide-react';
+import { ShieldCheck, Search, CheckCircle2, AlertCircle, HelpCircle, Loader2, Lock, WifiOff } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 
 export default function SafetyStatusWidget() {
   const { user } = useAuth();
@@ -20,6 +21,35 @@ export default function SafetyStatusWidget() {
     if (newStatus === currentStatus) return;
     setUpdating(true);
     setUpdateMsg('');
+
+    const payload = {
+      userId: user?.id,
+      safetyStatus: newStatus,
+      capturedAt: new Date().toISOString(),
+    };
+
+    const shouldQueueDirectly =
+      isManualOffline() || (typeof navigator !== 'undefined' && !navigator.onLine);
+
+    if (shouldQueueDirectly) {
+      try {
+        await enqueueAction({
+          type: 'SAFETY_STATUS',
+          endpoint: '/auth/safety-status',
+          payload,
+        });
+        setCurrentStatus(newStatus);
+        setLastUpdated(new Date().toISOString());
+        setUpdateMsg(`Marked as ${newStatus} (Saved Offline • Syncs on reconnect)`);
+        setTimeout(() => setUpdateMsg(''), 4000);
+      } catch (err) {
+        console.error('Failed to queue safety status offline:', err);
+      } finally {
+        setUpdating(false);
+      }
+      return;
+    }
+
     try {
       const res = await api.patch('/auth/safety-status', { safetyStatus: newStatus });
       setCurrentStatus(res.data.user.safetyStatus);
@@ -27,8 +57,21 @@ export default function SafetyStatusWidget() {
       setUpdateMsg(`Marked as ${newStatus}`);
       setTimeout(() => setUpdateMsg(''), 3000);
     } catch (err) {
-      console.error('Failed to update safety status', err);
-      alert(err.response?.data?.error || 'Failed to update safety status');
+      console.warn('Direct safety status update failed, queueing offline:', err);
+      try {
+        await enqueueAction({
+          type: 'SAFETY_STATUS',
+          endpoint: '/auth/safety-status',
+          payload,
+        });
+        setCurrentStatus(newStatus);
+        setLastUpdated(new Date().toISOString());
+        setUpdateMsg(`Marked as ${newStatus} (Saved Offline • Syncs on reconnect)`);
+        setTimeout(() => setUpdateMsg(''), 4000);
+      } catch (queueErr) {
+        console.error('Failed to update safety status', err);
+        alert(err.response?.data?.error || 'Failed to update safety status');
+      }
     } finally {
       setUpdating(false);
     }

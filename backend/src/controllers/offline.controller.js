@@ -1,5 +1,8 @@
 const prisma = require('../db');
 const { parseSMSPayload, applyParsedPayload } = require('../services/smsParser.service');
+const { broadcastSOSCreated, broadcastHazardCreated, broadcastShelterAudit } = require('../sockets/socketHandler');
+const { formatSOS } = require('./sos.controller');
+const { computeShelterStatus, logShelterEventInternal } = require('./shelter.controller');
 
 /**
  * Ingests a simulated raw SMS telemetry packet
@@ -46,6 +49,7 @@ async function getSyncLogs(req, res) {
 
 /**
  * Ingest a batch of offline-queued items when connection is restored
+ * Handles SOS, HAZARD reports, and SMS telemetry with client-side idempotency checking
  */
 async function syncOfflineBatch(req, res) {
   try {
@@ -53,18 +57,280 @@ async function syncOfflineBatch(req, res) {
     const results = [];
 
     for (const item of items) {
-      if (item.type === 'SMS') {
-        const parsed = parseSMSPayload(item.payload);
-        if (parsed.success) {
-          const applied = await applyParsedPayload(parsed, sourceNode);
-          results.push({ item, status: 'SYNCED', applied });
-        } else {
-          results.push({ item, status: 'FAILED', error: parsed.error });
+      try {
+        const idempotencyKey = item.idempotencyKey || item.id || null;
+
+        // Idempotency check: prevent duplicate replay if already processed
+        if (idempotencyKey) {
+          const existingLog = await prisma.offlineSyncLog.findFirst({
+            where: {
+              parsedData: {
+                contains: `"idempotencyKey":"${idempotencyKey}"`,
+              },
+            },
+          });
+          if (existingLog) {
+            results.push({
+              item,
+              status: 'DUPLICATE_IGNORED',
+              message: 'Item already processed previously under idempotency key',
+              idempotencyKey,
+            });
+            continue;
+          }
         }
+
+        if (item.type === 'SOS') {
+          const data = item.payload || {};
+          const lat = typeof data.lat === 'number' ? data.lat : parseFloat(data.lat);
+          const lng = typeof data.lng === 'number' ? data.lng : parseFloat(data.lng);
+
+          if (isNaN(lat) || isNaN(lng)) {
+            results.push({ item, status: 'FAILED', error: 'Invalid coordinates for SOS' });
+            continue;
+          }
+
+          const tagsStr = Array.isArray(data.vulnerabilityTags)
+            ? data.vulnerabilityTags.join(',')
+            : String(data.vulnerabilityTags || '').trim();
+
+          const parsedBattery =
+            typeof data.batteryLevel === 'number' && !isNaN(data.batteryLevel)
+              ? Math.round(data.batteryLevel)
+              : null;
+          const isUrgent = tagsStr.length > 0 || (parsedBattery !== null && parsedBattery <= 15);
+          const priority = data.priority || (isUrgent ? 'URGENT' : 'NORMAL');
+
+          const parsedAccuracy =
+            typeof data.coordsAccuracy === 'number' && !isNaN(data.coordsAccuracy)
+              ? Math.round(data.coordsAccuracy)
+              : null;
+          const parsedCapturedAt = data.capturedAt
+            ? new Date(data.capturedAt)
+            : item.queuedAt
+            ? new Date(item.queuedAt)
+            : new Date();
+
+          const sos = await prisma.sOSRequest.create({
+            data: {
+              userId: data.userId || null,
+              userName: data.userName || 'Offline Citizen (Queued)',
+              userPhone: data.userPhone || 'OFFLINE-QUEUED',
+              lat,
+              lng,
+              coordsAccuracy: parsedAccuracy,
+              capturedAt: parsedCapturedAt,
+              hazardType: (data.hazardType || 'FLOOD').toUpperCase(),
+              vulnerabilityTags: tagsStr,
+              priority,
+              status: 'PENDING',
+              message: data.message || 'Emergency distress call queued while offline',
+              batteryLevel: parsedBattery,
+              reportedByProxy: Boolean(data.reportedByProxy),
+              subjectDescription: data.subjectDescription || null,
+            },
+          });
+
+          const formatted = formatSOS(sos);
+          broadcastSOSCreated(formatted);
+
+          const log = await prisma.offlineSyncLog.create({
+            data: {
+              rawPayload: JSON.stringify(item.payload),
+              parsedData: JSON.stringify({
+                action: 'SOS_TRIGGER',
+                idempotencyKey,
+                sosId: sos.id,
+                coordsAccuracy: parsedAccuracy,
+                relayedViaLocalHub: true,
+                queuedAt: item.queuedAt || null,
+              }),
+              sourceNode,
+              syncedAt: new Date(),
+            },
+          });
+
+          results.push({ item, status: 'SYNCED', record: formatted, logId: log.id });
+        } else if (item.type === 'HAZARD') {
+          const data = item.payload || {};
+          const lat = typeof data.lat === 'number' ? data.lat : parseFloat(data.lat);
+          const lng = typeof data.lng === 'number' ? data.lng : parseFloat(data.lng);
+
+          if (isNaN(lat) || isNaN(lng) || !data.hazardNote) {
+            results.push({ item, status: 'FAILED', error: 'Coordinates and hazardNote are required' });
+            continue;
+          }
+
+          const validBenchmarks = ['ANKLE', 'KNEE', 'WAIST', 'SUBMERGED'];
+          const benchmark = (data.severityBenchmark || 'KNEE').toUpperCase();
+
+          const report = await prisma.hazardReport.create({
+            data: {
+              userId: data.userId || null,
+              userName: data.userName || 'Offline Citizen (Queued)',
+              lat,
+              lng,
+              hazardNote: data.hazardNote.trim(),
+              severityBenchmark: validBenchmarks.includes(benchmark) ? benchmark : 'KNEE',
+              photoUrl: data.photoUrl || null,
+              confidenceTier: 'GREY',
+              confirmationsCount: 0,
+            },
+            include: {
+              confirmations: true,
+            },
+          });
+
+          broadcastHazardCreated(report);
+
+          const log = await prisma.offlineSyncLog.create({
+            data: {
+              rawPayload: JSON.stringify(item.payload),
+              parsedData: JSON.stringify({
+                action: 'HAZARD_REPORT',
+                idempotencyKey,
+                hazardReportId: report.id,
+                relayedViaLocalHub: true,
+                queuedAt: item.queuedAt || null,
+              }),
+              sourceNode,
+              syncedAt: new Date(),
+            },
+          });
+
+          results.push({ item, status: 'SYNCED', record: report, logId: log.id });
+        } else if (item.type === 'SHELTER_EVENT' || item.type === 'SHELTER_DELTA') {
+          const data = item.payload || {};
+          const shelterId = parseInt(data.shelterId);
+          if (isNaN(shelterId)) {
+            results.push({ item, status: 'FAILED', error: 'Invalid shelter ID for delta event' });
+            continue;
+          }
+
+          try {
+            const { event, shelter: updatedShelter, duplicateIgnored } = await logShelterEventInternal({
+              shelterId,
+              deltaOccupancy: data.deltaOccupancy,
+              deltaWaterLiters: data.deltaWaterLiters,
+              deltaRations: data.deltaRations,
+              reason: data.reason || 'Offline field operator delta sync',
+              operatorName: data.operatorName || 'Offline Operator',
+              idempotencyKey: idempotencyKey || null,
+              capturedAt: data.capturedAt || item.queuedAt || null,
+            });
+
+            if (duplicateIgnored) {
+              results.push({ item, status: 'DUPLICATE', message: 'Event already recorded' });
+              continue;
+            }
+
+            const log = await prisma.offlineSyncLog.create({
+              data: {
+                rawPayload: JSON.stringify(item.payload),
+                parsedData: JSON.stringify({
+                  action: 'SHELTER_DELTA_EVENT',
+                  idempotencyKey,
+                  shelterId,
+                  eventId: event.id,
+                  deltaOccupancy: parseInt(data.deltaOccupancy) || 0,
+                  appliedStatus: updatedShelter.status,
+                  relayedViaLocalHub: true,
+                  queuedAt: item.queuedAt || null,
+                }),
+                sourceNode,
+                syncedAt: new Date(),
+              },
+            });
+
+            results.push({ item, status: 'SYNCED', record: event, shelter: updatedShelter, logId: log.id });
+          } catch (err) {
+            results.push({ item, status: 'FAILED', error: err.message });
+          }
+        } else if (item.type === 'SAFETY_STATUS') {
+          const data = item.payload || {};
+          const userId = parseInt(data.userId);
+          const safetyStatus = data.safetyStatus;
+          const valid = ['SAFE', 'NEEDS_HELP', 'UNKNOWN'];
+
+          if (!valid.includes(safetyStatus)) {
+            results.push({ item, status: 'FAILED', error: 'Invalid safety status' });
+            continue;
+          }
+
+          let targetUser = null;
+          if (userId && !isNaN(userId)) {
+            targetUser = await prisma.user.findUnique({ where: { id: userId } });
+          }
+          if (!targetUser && data.userEmail) {
+            targetUser = await prisma.user.findUnique({ where: { email: data.userEmail } });
+          }
+          if (!targetUser) {
+            targetUser = (await prisma.user.findFirst({ where: { role: 'CITIZEN' } })) || (await prisma.user.findFirst());
+          }
+
+          if (!targetUser) {
+            results.push({ item, status: 'FAILED', error: 'No matching user found for safety status sync' });
+            continue;
+          }
+
+          const user = await prisma.user.update({
+            where: { id: targetUser.id },
+            data: {
+              safetyStatus,
+              safetyUpdatedAt: new Date(),
+            },
+          });
+
+          const log = await prisma.offlineSyncLog.create({
+            data: {
+              rawPayload: JSON.stringify(item.payload),
+              parsedData: JSON.stringify({
+                action: 'SAFETY_STATUS_SYNC',
+                idempotencyKey,
+                userId,
+                safetyStatus,
+                relayedViaLocalHub: true,
+                queuedAt: item.queuedAt || null,
+              }),
+              sourceNode,
+              syncedAt: new Date(),
+            },
+          });
+
+          results.push({ item, status: 'SYNCED', record: user, logId: log.id });
+        } else if (item.type === 'SMS') {
+          const payloadStr = typeof item.payload === 'string' ? item.payload : item.payload?.raw || '';
+          const parsed = parseSMSPayload(payloadStr);
+          if (parsed.success) {
+            const applied = await applyParsedPayload(parsed, sourceNode, {
+              idempotencyKey,
+              relayedViaLocalHub: true,
+              queuedAt: item.queuedAt || null,
+            });
+            results.push({ item, status: 'SYNCED', applied });
+          } else {
+            results.push({ item, status: 'FAILED', error: parsed.error });
+          }
+        } else {
+          results.push({ item, status: 'FAILED', error: `Unknown item type: ${item.type}` });
+        }
+      } catch (itemError) {
+        console.error('Error processing individual offline item:', itemError);
+        results.push({ item, status: 'FAILED', error: itemError.message });
       }
     }
 
-    res.status(200).json({ message: `Processed ${results.length} offline queued items`, results });
+    const syncedCount = results.filter((r) => r.status === 'SYNCED').length;
+    const dupeCount = results.filter((r) => r.status === 'DUPLICATE_IGNORED').length;
+    const failedCount = results.filter((r) => r.status === 'FAILED').length;
+
+    res.status(200).json({
+      message: `Processed ${results.length} offline queued items (${syncedCount} synced, ${dupeCount} duplicates ignored, ${failedCount} failed)`,
+      syncedCount,
+      dupeCount,
+      failedCount,
+      results,
+    });
   } catch (error) {
     console.error('Error syncing offline batch:', error);
     res.status(500).json({ error: 'Failed to sync batch' });

@@ -7,11 +7,12 @@ import Register from './pages/Register';
 import CitizenDashboard from './pages/CitizenDashboard';
 import VolunteerDashboard from './pages/VolunteerDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import PublicAlertRegistry from './pages/PublicAlertRegistry';
 import { Shield, Loader2 } from 'lucide-react';
 
 function MainApp() {
   const { user, role, loading } = useAuth();
-  const [authView, setAuthView] = useState('login'); // 'login' or 'register'
+  const [authView, setAuthView] = useState('login'); // 'login', 'register', or 'public-alerts'
 
   if (loading) {
     return (
@@ -25,10 +26,20 @@ function MainApp() {
   }
 
   if (!user) {
+    if (authView === 'public-alerts') {
+      return <PublicAlertRegistry onBackToLogin={() => setAuthView('login')} />;
+    }
+
     return authView === 'login' ? (
-      <Login onSwitchToRegister={() => setAuthView('register')} />
+      <Login
+        onSwitchToRegister={() => setAuthView('register')}
+        onSwitchToPublicAlerts={() => setAuthView('public-alerts')}
+      />
     ) : (
-      <Register onSwitchToLogin={() => setAuthView('login')} />
+      <Register
+        onSwitchToLogin={() => setAuthView('login')}
+        onSwitchToPublicAlerts={() => setAuthView('public-alerts')}
+      />
     );
   }
 

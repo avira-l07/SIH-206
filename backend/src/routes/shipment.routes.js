@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const supplyController = require('../controllers/supply.controller');
-const { authenticateToken, requireRole } = require('../middleware/auth.middleware');
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../middleware/auth.middleware');
 
@@ -16,12 +15,7 @@ function optionalAuth(req, res, next) {
   });
 }
 
-router.get('/', supplyController.getSupplies);
-router.post('/', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), supplyController.upsertSupplyItem);
-router.patch('/:id', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), supplyController.updateSupplyStock);
-
-// Shipments under /api/supplies/shipments
-router.post('/shipments', optionalAuth, supplyController.logSupplyShipment);
-router.get('/shipments', supplyController.getSupplyShipments);
+router.post('/', optionalAuth, supplyController.logSupplyShipment);
+router.get('/', supplyController.getSupplyShipments);
 
 module.exports = router;
