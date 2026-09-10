@@ -54,6 +54,14 @@ async function getSyncLogs(req, res) {
 async function syncOfflineBatch(req, res) {
   try {
     const { items = [], sourceNode = 'Browser Offline Queue' } = req.body;
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'items must be an array' });
+    }
+    if (items.length > 50) {
+      return res.status(400).json({ error: 'Batch size exceeds maximum limit of 50 items' });
+    }
+
+    const sanitizedSourceNode = String(sourceNode || 'Browser Offline Queue').slice(0, 100);
     const results = [];
 
     for (const item of items) {
@@ -85,8 +93,8 @@ async function syncOfflineBatch(req, res) {
           const lat = typeof data.lat === 'number' ? data.lat : parseFloat(data.lat);
           const lng = typeof data.lng === 'number' ? data.lng : parseFloat(data.lng);
 
-          if (isNaN(lat) || isNaN(lng)) {
-            results.push({ item, status: 'FAILED', error: 'Invalid coordinates for SOS' });
+          if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            results.push({ item, status: 'FAILED', error: 'Invalid coordinates for SOS (−90 to 90, −180 to 180)' });
             continue;
           }
 
@@ -114,20 +122,20 @@ async function syncOfflineBatch(req, res) {
           const sos = await prisma.sOSRequest.create({
             data: {
               userId: data.userId || null,
-              userName: data.userName || 'Offline Citizen (Queued)',
-              userPhone: data.userPhone || 'OFFLINE-QUEUED',
+              userName: String(data.userName || 'Offline Citizen (Queued)').slice(0, 100),
+              userPhone: String(data.userPhone || 'OFFLINE-QUEUED').slice(0, 25),
               lat,
               lng,
               coordsAccuracy: parsedAccuracy,
               capturedAt: parsedCapturedAt,
               hazardType: (data.hazardType || 'FLOOD').toUpperCase(),
-              vulnerabilityTags: tagsStr,
+              vulnerabilityTags: tagsStr.slice(0, 200),
               priority,
               status: 'PENDING',
-              message: data.message || 'Emergency distress call queued while offline',
+              message: String(data.message || 'Emergency distress call queued while offline').slice(0, 2000),
               batteryLevel: parsedBattery,
               reportedByProxy: Boolean(data.reportedByProxy),
-              subjectDescription: data.subjectDescription || null,
+              subjectDescription: data.subjectDescription ? String(data.subjectDescription).slice(0, 500) : null,
             },
           });
 
@@ -145,7 +153,7 @@ async function syncOfflineBatch(req, res) {
                 relayedViaLocalHub: true,
                 queuedAt: item.queuedAt || null,
               }),
-              sourceNode,
+              sourceNode: sanitizedSourceNode,
               syncedAt: new Date(),
             },
           });
@@ -156,9 +164,17 @@ async function syncOfflineBatch(req, res) {
           const lat = typeof data.lat === 'number' ? data.lat : parseFloat(data.lat);
           const lng = typeof data.lng === 'number' ? data.lng : parseFloat(data.lng);
 
-          if (isNaN(lat) || isNaN(lng) || !data.hazardNote) {
-            results.push({ item, status: 'FAILED', error: 'Coordinates and hazardNote are required' });
+          if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180 || !data.hazardNote) {
+            results.push({ item, status: 'FAILED', error: 'Valid coordinates and hazardNote are required' });
             continue;
+          }
+
+          let sanitizedPhotoUrl = null;
+          if (data.photoUrl) {
+            const urlStr = String(data.photoUrl).trim();
+            if (urlStr.length <= 500 && /^https?:\/\//i.test(urlStr)) {
+              sanitizedPhotoUrl = urlStr;
+            }
           }
 
           const validBenchmarks = ['ANKLE', 'KNEE', 'WAIST', 'SUBMERGED'];
@@ -167,12 +183,12 @@ async function syncOfflineBatch(req, res) {
           const report = await prisma.hazardReport.create({
             data: {
               userId: data.userId || null,
-              userName: data.userName || 'Offline Citizen (Queued)',
+              userName: String(data.userName || 'Offline Citizen (Queued)').slice(0, 100),
               lat,
               lng,
-              hazardNote: data.hazardNote.trim(),
+              hazardNote: String(data.hazardNote).trim().slice(0, 1000),
               severityBenchmark: validBenchmarks.includes(benchmark) ? benchmark : 'KNEE',
-              photoUrl: data.photoUrl || null,
+              photoUrl: sanitizedPhotoUrl,
               confidenceTier: 'GREY',
               confirmationsCount: 0,
             },
@@ -193,7 +209,7 @@ async function syncOfflineBatch(req, res) {
                 relayedViaLocalHub: true,
                 queuedAt: item.queuedAt || null,
               }),
-              sourceNode,
+              sourceNode: sanitizedSourceNode,
               syncedAt: new Date(),
             },
           });
@@ -237,7 +253,7 @@ async function syncOfflineBatch(req, res) {
                   relayedViaLocalHub: true,
                   queuedAt: item.queuedAt || null,
                 }),
-                sourceNode,
+                sourceNode: sanitizedSourceNode,
                 syncedAt: new Date(),
               },
             });
@@ -262,10 +278,7 @@ async function syncOfflineBatch(req, res) {
             targetUser = await prisma.user.findUnique({ where: { id: userId } });
           }
           if (!targetUser && data.userEmail) {
-            targetUser = await prisma.user.findUnique({ where: { email: data.userEmail } });
-          }
-          if (!targetUser) {
-            targetUser = (await prisma.user.findFirst({ where: { role: 'CITIZEN' } })) || (await prisma.user.findFirst());
+            targetUser = await prisma.user.findUnique({ where: { email: String(data.userEmail).toLowerCase() } });
           }
 
           if (!targetUser) {

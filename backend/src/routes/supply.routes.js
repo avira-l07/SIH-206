@@ -20,8 +20,8 @@ router.get('/', supplyController.getSupplies);
 router.post('/', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), supplyController.upsertSupplyItem);
 router.patch('/:id', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), supplyController.updateSupplyStock);
 
-// Shipments under /api/supplies/shipments
-router.post('/shipments', optionalAuth, supplyController.logSupplyShipment);
+// Shipments under /api/supplies/shipments - restricted to verified responders
+router.post('/shipments', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), supplyController.logSupplyShipment);
 router.get('/shipments', supplyController.getSupplyShipments);
 
 module.exports = router;

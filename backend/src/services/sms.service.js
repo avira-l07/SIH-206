@@ -58,6 +58,13 @@ function normalizePhoneNumber(phone) {
  * @param {string} message Concise emergency alert message (max 160 chars recommended)
  * @returns {Promise<{ attempted: number, delivered: number, failed: number, simulated: boolean, results: Array }>}
  */
+function maskPhoneNumber(phone) {
+  if (!phone) return '***';
+  const str = String(phone);
+  if (str.length <= 5) return '***';
+  return str.slice(0, 3) + '******' + str.slice(-3);
+}
+
 async function sendBroadcastSMS(phoneNumbers = [], message) {
   if (!phoneNumbers || phoneNumbers.length === 0) {
     return { attempted: 0, delivered: 0, failed: 0, simulated: false, results: [] };
@@ -80,7 +87,7 @@ async function sendBroadcastSMS(phoneNumbers = [], message) {
       failed: 0,
       simulated: true,
       results: phoneNumbers.map((phone) => ({
-        phone,
+        phone: maskPhoneNumber(phone),
         status: 'simulated_delivered',
       })),
     };
@@ -91,6 +98,7 @@ async function sendBroadcastSMS(phoneNumbers = [], message) {
   // Batch process with Promise.allSettled for failure isolation
   const sendPromises = phoneNumbers.map(async (rawPhone) => {
     const formattedPhone = normalizePhoneNumber(rawPhone);
+    const masked = maskPhoneNumber(formattedPhone);
     try {
       const response = await client.messages.create({
         body: message,
@@ -98,19 +106,19 @@ async function sendBroadcastSMS(phoneNumbers = [], message) {
         to: formattedPhone,
       });
 
-      console.log(`[SMS Service] Sent to ${formattedPhone}, Twilio SID: ${response.sid}`);
+      console.log(`[SMS Service] Sent to ${masked}, Twilio SID: ${response.sid}`);
       return {
-        phone: formattedPhone,
+        phone: masked,
         status: 'sent',
         sid: response.sid,
       };
     } catch (err) {
-      console.warn(`[SMS Service] Failed to send to ${formattedPhone}: ${err.message} (Code: ${err.code || 'N/A'})`);
+      console.warn(`[SMS Service] Failed to send to ${masked}: ${err.message} (Code: ${err.code || 'N/A'})`);
       if (err.code === 21608) {
-        console.warn(`[SMS Service] Note: Number ${formattedPhone} is unverified on Twilio Trial account.`);
+        console.warn(`[SMS Service] Note: Number ${masked} is unverified on Twilio Trial account.`);
       }
       return {
-        phone: formattedPhone,
+        phone: masked,
         status: 'failed',
         error: err.message,
         code: err.code,

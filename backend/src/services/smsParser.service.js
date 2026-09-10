@@ -77,8 +77,8 @@ function parseSMSPayload(payload = '') {
     const lat = parseFloat(tokens[1]);
     const lng = parseFloat(tokens[2]);
 
-    if (isNaN(lat) || isNaN(lng)) {
-      return { success: false, error: `Invalid GPS coordinates in SOS payload: "${tokens[1]}, ${tokens[2]}"` };
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return { success: false, error: `Invalid GPS coordinates in SOS payload: "${tokens[1]}, ${tokens[2]}" (must be within lat −90..90, lng −180..180)` };
     }
 
     const hazardType = tokens[3] ? tokens[3].toUpperCase() : 'FLOOD';

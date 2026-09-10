@@ -439,8 +439,10 @@ async function citizenVerifySOS(req, res) {
     }
 
     // Security guard: only the original reporting citizen (or ADMIN) can verify rescue closure
-    if (sos.userId && req.user.role !== 'ADMIN' && req.user.id !== sos.userId) {
-      return res.status(403).json({ error: 'Only the citizen who filed this distress signal can confirm rescue closure' });
+    const isAdmin = req.user && req.user.role === 'ADMIN';
+    const isOwner = Boolean(sos.userId && req.user && req.user.id === sos.userId);
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'Only the citizen who filed this distress signal (or an administrator) can confirm rescue closure' });
     }
 
     if (confirmed === true) {

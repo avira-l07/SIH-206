@@ -18,7 +18,7 @@ function optionalAuth(req, res, next) {
 }
 
 router.post('/', optionalAuth, validateSOS, sosController.createSOS);
-router.get('/', authenticateToken, sosController.getSOSList);
+router.get('/', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), sosController.getSOSList);
 router.get('/my', authenticateToken, sosController.getMySOS);
 
 // Admin-only verification (Decision 0.1)

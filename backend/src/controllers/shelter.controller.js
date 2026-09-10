@@ -81,11 +81,19 @@ async function createShelter(req, res) {
       return res.status(400).json({ error: 'Missing required shelter fields: name, lat, lng, capacity' });
     }
 
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Valid geographic coordinates (lat −90–90, lng −180–180) are required' });
+    }
+
     const parsedCapacity = parseInt(capacity);
-    const parsedOccupancy = parseInt(currentOccupancy) || 0;
-    const parsedWaterLiters = typeof waterLitersRemaining === 'number' ? waterLitersRemaining : null;
+    if (isNaN(parsedCapacity) || parsedCapacity <= 0 || parsedCapacity > 100000) {
+      return res.status(400).json({ error: 'Capacity must be a positive integer between 1 and 100,000' });
+    }
+
+    const parsedOccupancy = Math.max(0, parseInt(currentOccupancy) || 0);
+    const parsedWaterLiters = typeof waterLitersRemaining === 'number' ? Math.max(0, waterLitersRemaining) : null;
     const parsedWaterThreshold = parseInt(waterThreshold) || 200;
-    const parsedRationsUnits = typeof rationsUnitsRemaining === 'number' ? rationsUnitsRemaining : null;
+    const parsedRationsUnits = typeof rationsUnitsRemaining === 'number' ? Math.max(0, rationsUnitsRemaining) : null;
     const parsedRationsThreshold = parseInt(rationsThreshold) || 50;
 
     const status = computeShelterStatus(
@@ -101,13 +109,13 @@ async function createShelter(req, res) {
 
     const shelter = await prisma.shelter.create({
       data: {
-        name,
-        address: address || '',
+        name: String(name).trim().slice(0, 150),
+        address: String(address || '').slice(0, 250),
         lat,
         lng,
         capacity: parsedCapacity,
-        currentOccupancy: parsedOccupancy,
-        contact: contact || '',
+        currentOccupancy: Math.min(parsedCapacity, parsedOccupancy),
+        contact: String(contact || '').slice(0, 50),
         waterOk,
         rationsOk,
         restroomsOk,
@@ -227,9 +235,9 @@ async function logShelterEventInternal({
         deltaOccupancy: dOcc,
         deltaWaterLiters: dWater,
         deltaRations: dRat,
-        reason: String(reason).trim(),
-        operatorName: String(operatorName).trim(),
-        idempotencyKey: idempotencyKey || null,
+        reason: String(reason || 'Field logistics adjustment').trim().slice(0, 500),
+        operatorName: String(operatorName || 'Field Operator').trim().slice(0, 100),
+        idempotencyKey: idempotencyKey ? String(idempotencyKey).slice(0, 100) : null,
         capturedAt: capturedAt ? new Date(capturedAt) : new Date(),
       },
     }),

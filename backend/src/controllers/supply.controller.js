@@ -120,12 +120,18 @@ async function logSupplyShipment(req, res) {
   try {
     const { shelterId, supplyRequestId, itemName, quantityClaimed, quantityVerified } = req.body;
 
-    if (!shelterId || !itemName) {
-      return res.status(400).json({ error: 'shelterId and itemName are required' });
+    const parsedShelterId = parseInt(shelterId);
+    if (isNaN(parsedShelterId) || !itemName || typeof itemName !== 'string') {
+      return res.status(400).json({ error: 'Valid shelterId and itemName string are required' });
     }
 
-    const qClaimed = parseInt(quantityClaimed) || 0;
-    const qVerified = parseInt(quantityVerified) || 0;
+    const trimmedItemName = itemName.trim().slice(0, 100);
+    if (trimmedItemName.length === 0) {
+      return res.status(400).json({ error: 'itemName cannot be empty' });
+    }
+
+    const qClaimed = Math.max(0, Math.min(1000000, parseInt(quantityClaimed) || 0));
+    const qVerified = Math.max(0, Math.min(1000000, parseInt(quantityVerified) || 0));
 
     let targetRequestId = supplyRequestId ? parseInt(supplyRequestId) : null;
 
@@ -133,8 +139,8 @@ async function logSupplyShipment(req, res) {
     if (!targetRequestId) {
       const match = await prisma.supplyRequest.findFirst({
         where: {
-          shelterId: parseInt(shelterId),
-          itemName: { equals: itemName.trim() },
+          shelterId: parsedShelterId,
+          itemName: { equals: trimmedItemName },
         },
       });
       if (match) targetRequestId = match.id;
@@ -142,9 +148,9 @@ async function logSupplyShipment(req, res) {
 
     const shipment = await prisma.supplyShipment.create({
       data: {
-        shelterId: parseInt(shelterId),
+        shelterId: parsedShelterId,
         supplyRequestId: targetRequestId,
-        itemName: itemName.trim(),
+        itemName: trimmedItemName,
         quantityClaimed: qClaimed,
         quantityVerified: qVerified,
         loggedByUserId: req.user ? req.user.id : null,

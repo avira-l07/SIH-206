@@ -56,6 +56,12 @@ function getVapidPublicKey() {
  * @param {object} payload Alert details { title, body, alertId, severity, hazardType, region, lat, lng }
  * @returns {Promise<{ attempted: number, delivered: number, pruned: number, failed: number }>}
  */
+function maskEndpoint(endpoint) {
+  if (!endpoint) return '***';
+  const str = String(endpoint);
+  return str.slice(0, 35) + '...';
+}
+
 async function sendPushBroadcast(subscriptions = [], payload = {}) {
   if (!subscriptions || subscriptions.length === 0) {
     return { attempted: 0, delivered: 0, pruned: 0, failed: 0 };
@@ -85,6 +91,7 @@ async function sendPushBroadcast(subscriptions = [], payload = {}) {
   let failedCount = 0;
 
   const pushPromises = subscriptions.map(async (sub) => {
+    const maskedEndpoint = maskEndpoint(sub.endpoint);
     let pushSubscription;
     try {
       const keysObj = typeof sub.keys === 'string' ? JSON.parse(sub.keys) : sub.keys;
@@ -93,7 +100,7 @@ async function sendPushBroadcast(subscriptions = [], payload = {}) {
         keys: keysObj,
       };
     } catch (parseErr) {
-      console.warn(`[Push Service] Invalid keys JSON for endpoint ${sub.endpoint}:`, parseErr.message);
+      console.warn(`[Push Service] Invalid keys JSON for endpoint ${maskedEndpoint}:`, parseErr.message);
       failedCount++;
       return;
     }
@@ -108,7 +115,7 @@ async function sendPushBroadcast(subscriptions = [], payload = {}) {
       const status = pushErr.statusCode;
       // HTTP 410 Gone or 404 Not Found indicates subscription expired / uninstalled -> Prune
       if (status === 410 || status === 404) {
-        console.log(`[Push Service] Pruning expired push subscription: ${sub.endpoint} (HTTP ${status})`);
+        console.log(`[Push Service] Pruning expired push subscription: ${maskedEndpoint} (HTTP ${status})`);
         prunedCount++;
         try {
           await prisma.pushSubscription.delete({
@@ -118,7 +125,7 @@ async function sendPushBroadcast(subscriptions = [], payload = {}) {
           console.warn('[Push Service] Could not prune subscription from DB:', dbErr.message);
         }
       } else {
-        console.warn(`[Push Service] Push delivery error for ${sub.endpoint}:`, pushErr.message);
+        console.warn(`[Push Service] Push delivery error for ${maskedEndpoint}:`, pushErr.message);
         failedCount++;
       }
     }

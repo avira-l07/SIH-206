@@ -13,9 +13,15 @@ function isValidCoords(lat, lng) {
 // Middleware to validate user registration & profile updates
 function validateRole(req, res, next) {
   const role = req.body.role || 'CITIZEN';
-  if (!ROLES.includes(role)) {
+  if (role === 'ADMIN') {
+    return res.status(403).json({
+      error: 'Self-assignment of ADMIN role is forbidden. Administrators must be provisioned by existing authorities.'
+    });
+  }
+  const ALLOWED_REGISTRATION_ROLES = ['CITIZEN', 'VOLUNTEER'];
+  if (!ALLOWED_REGISTRATION_ROLES.includes(role)) {
     return res.status(400).json({
-      error: `Invalid role '${role}'. Allowed roles: ${ROLES.join(', ')}`
+      error: `Invalid role '${role}'. Allowed roles: ${ALLOWED_REGISTRATION_ROLES.join(', ')}`
     });
   }
   req.body.role = role;
@@ -37,7 +43,7 @@ function validateAlert(req, res, next) {
   }
   if (!region || !isValidCoords(lat, lng) || !message) {
     return res.status(400).json({
-      error: 'Missing or invalid required fields: region, lat (\u221290 to 90), lng (\u2212180 to 180), message'
+      error: 'Missing or invalid required fields: region, lat (−90 to 90), lng (−180 to 180), message'
     });
   }
   if (typeof region === 'string' && region.length > 200) {
@@ -51,17 +57,23 @@ function validateAlert(req, res, next) {
 
 // Middleware to validate SOS creation
 function validateSOS(req, res, next) {
-  const { lat, lng, message, hazardType } = req.body;
-  const userName = req.body.userName || (req.user ? req.user.name : 'Anonymous Citizen');
-  req.body.userName = userName;
+  const { lat, lng, message, hazardType, userName, userPhone, subjectDescription } = req.body;
+  const resolvedUserName = userName || (req.user ? req.user.name : 'Anonymous Citizen');
+  req.body.userName = String(resolvedUserName).slice(0, 100);
 
   if (!isValidCoords(lat, lng) || !message) {
     return res.status(400).json({
-      error: 'Missing or invalid required SOS fields: lat (\u221290 to 90), lng (\u2212180 to 180), message'
+      error: 'Missing or invalid required SOS fields: lat (−90 to 90), lng (−180 to 180), message'
     });
   }
   if (typeof message === 'string' && message.length > 2000) {
     return res.status(400).json({ error: 'message must be 2000 characters or fewer' });
+  }
+  if (userPhone && String(userPhone).length > 25) {
+    return res.status(400).json({ error: 'userPhone must be 25 characters or fewer' });
+  }
+  if (subjectDescription && String(subjectDescription).length > 500) {
+    return res.status(400).json({ error: 'subjectDescription must be 500 characters or fewer' });
   }
   if (hazardType && !HAZARD_TYPES.includes(hazardType)) {
     return res.status(400).json({
@@ -83,6 +95,7 @@ function validateSOSStatus(req, res, next) {
 }
 
 module.exports = {
+  isValidCoords,
   validateRole,
   validateAlert,
   validateSOS,

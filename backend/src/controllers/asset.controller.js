@@ -70,18 +70,24 @@ async function registerAsset(req, res) {
       });
     }
 
-    const resolvedType = (type || assetType).toUpperCase();
-    const resolvedAssetType = (assetType || type).toUpperCase();
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({
+        error: 'Valid coordinates (lat −90–90, lng −180–180) are required',
+      });
+    }
+
+    const resolvedType = String(type || assetType).toUpperCase().slice(0, 50);
+    const resolvedAssetType = String(assetType || type).toUpperCase().slice(0, 50);
 
     const asset = await prisma.civilianAsset.create({
       data: {
         userId,
-        ownerName: ownerName.trim(),
-        contact: contact.trim(),
+        ownerName: String(ownerName).trim().slice(0, 100),
+        contact: String(contact).trim().slice(0, 50),
         type: resolvedType,
         assetType: resolvedAssetType,
-        title: title.trim(),
-        description: description || '',
+        title: String(title).trim().slice(0, 150),
+        description: String(description || '').slice(0, 1000),
         lat,
         lng,
         available: true,
@@ -96,15 +102,29 @@ async function registerAsset(req, res) {
 }
 
 /**
- * Toggle availability of an asset
+ * Toggle availability of an asset (protected against IDOR)
  */
 async function toggleAssetAvailability(req, res) {
   try {
-    const { id } = req.params;
+    const assetId = parseInt(req.params.id);
+    if (isNaN(assetId)) {
+      return res.status(400).json({ error: 'Invalid asset ID' });
+    }
     const { available } = req.body;
 
+    const asset = await prisma.civilianAsset.findUnique({ where: { id: assetId } });
+    if (!asset) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+
+    const isAdmin = req.user && req.user.role === 'ADMIN';
+    const isOwner = Boolean(asset.userId && req.user && req.user.id === asset.userId);
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'You are not authorized to update this resource availability' });
+    }
+
     const updated = await prisma.civilianAsset.update({
-      where: { id: parseInt(id) },
+      where: { id: assetId },
       data: { available: Boolean(available) },
     });
 

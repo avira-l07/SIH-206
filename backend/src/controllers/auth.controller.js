@@ -11,6 +11,31 @@ async function register(req, res) {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
 
+    if (role === 'ADMIN') {
+      return res.status(403).json({
+        error: 'Self-assignment of ADMIN role is forbidden. Administrators must be provisioned by existing authorities.'
+      });
+    }
+
+    const resolvedRole = ['CITIZEN', 'VOLUNTEER'].includes(role) ? role : 'CITIZEN';
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (typeof email !== 'string' || !emailRegex.test(email) || email.length > 254) {
+      return res.status(400).json({ error: 'A valid email address is required (max 254 characters)' });
+    }
+
+    if (typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+    if (password.length > 72) {
+      return res.status(400).json({ error: 'Password must be 72 characters or fewer' });
+    }
+
+    const trimmedName = String(name).trim().slice(0, 100);
+    const cleanPhone = phone ? String(phone).replace(/[^\d+\-\s]/g, '').slice(0, 20) : null;
+    const validLat = typeof lat === 'number' && lat >= -90 && lat <= 90 ? lat : null;
+    const validLng = typeof lng === 'number' && lng >= -180 && lng <= 180 ? lng : null;
+
     const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
     if (existing) {
       return res.status(409).json({ error: 'User with this email already exists' });
@@ -21,13 +46,13 @@ async function register(req, res) {
 
     const user = await prisma.user.create({
       data: {
-        name,
+        name: trimmedName,
         email: email.toLowerCase(),
         passwordHash,
-        role,
-        phone: phone || null,
-        lat: typeof lat === 'number' ? lat : null,
-        lng: typeof lng === 'number' ? lng : null,
+        role: resolvedRole,
+        phone: cleanPhone,
+        lat: validLat,
+        lng: validLng,
         trusted: false,
       },
     });

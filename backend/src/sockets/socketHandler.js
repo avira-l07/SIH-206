@@ -23,13 +23,45 @@ function setupSockets(io) {
       }
     }
 
-    // Explicit role join event (for dynamic logins or test runners)
-    socket.on('join:role', (role) => {
-      if (role && ['CITIZEN', 'VOLUNTEER', 'ADMIN'].includes(String(role).toUpperCase())) {
-        const roleRoom = `role:${String(role).toUpperCase()}`;
-        socket.join(roleRoom);
-        socket.userRole = String(role).toUpperCase();
-        console.log(`⚡ Socket ${socket.id} joined role room: ${roleRoom}`);
+    // Explicit role join event (cryptographically verified for privileged roles)
+    socket.on('join:role', (payload) => {
+      const requestedRole = typeof payload === 'string' ? payload.toUpperCase() : payload?.role?.toUpperCase();
+      const token = typeof payload === 'object' ? payload?.token : null;
+
+      if (!requestedRole) return;
+
+      // CITIZEN room is public for public emergency alerts
+      if (requestedRole === 'CITIZEN') {
+        socket.join('role:CITIZEN');
+        socket.userRole = 'CITIZEN';
+        return;
+      }
+
+      // Privileged roles (ADMIN, VOLUNTEER) require valid JWT token
+      if (['VOLUNTEER', 'ADMIN'].includes(requestedRole)) {
+        const verificationToken = token || socket.handshake.auth?.token || socket.handshake.query?.token;
+        if (!verificationToken) {
+          console.warn(`[Socket Security] Denied join to privileged room role:${requestedRole} for unauthenticated socket ${socket.id}`);
+          socket.emit('error:unauthorized', { error: `Authentication token required to join role:${requestedRole}` });
+          return;
+        }
+
+        try {
+          const decoded = jwt.verify(verificationToken, JWT_SECRET);
+          const userRole = decoded.role?.toUpperCase();
+          if (userRole === requestedRole || (requestedRole === 'VOLUNTEER' && userRole === 'ADMIN')) {
+            const roleRoom = `role:${requestedRole}`;
+            socket.join(roleRoom);
+            socket.userRole = requestedRole;
+            console.log(`⚡ Socket ${socket.id} verified and joined role room: ${roleRoom}`);
+          } else {
+            console.warn(`[Socket Security] Role mismatch for socket ${socket.id}: token role is ${userRole}, requested ${requestedRole}`);
+            socket.emit('error:unauthorized', { error: `Insufficient permissions for role:${requestedRole}` });
+          }
+        } catch (err) {
+          console.warn(`[Socket Security] Invalid token for role join from socket ${socket.id}: ${err.message}`);
+          socket.emit('error:unauthorized', { error: 'Invalid or expired authentication token' });
+        }
       }
     });
 
