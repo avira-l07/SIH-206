@@ -90,7 +90,7 @@ async function registerPhone(req, res) {
     // Explicitly return success message with ZERO phone number echo
     return res.status(200).json({
       success: true,
-      message: 'Phone registered successfully for emergency SMS broadcasts.',
+      message: `Phone number saved to emergency broadcast registry for ${assignedRegion || 'All Regions'}. You will receive SMS alerts when emergency broadcasts are dispatched for your area.`,
       region: assignedRegion || 'All Regions',
     });
   } catch (error) {

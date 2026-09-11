@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../context/AuthContext';
 import {
   AlertTriangle,
   AlertCircle,
@@ -93,12 +94,6 @@ class EmergencyAudioAlert {
   }
 }
 
-// Persist dismissed alert IDs to sessionStorage so they survive page reloads.
-// sessionStorage is intentional: clears when tab is closed, so a new session
-// (e.g. next morning) will still show active alerts. Never silences fresh alerts.
-const DISMISSED_KEY = 'sih_dismissed_alert_ids';
-const FULLSCREEN_DISMISSED_KEY = 'sih_fullscreen_dismissed_alert_ids';
-
 function readStoredIds(key) {
   try {
     return JSON.parse(sessionStorage.getItem(key) || '[]');
@@ -114,19 +109,30 @@ function writeStoredIds(key, ids) {
 }
 
 export default function AlertBanner({ alerts = [], onSelectAlert }) {
-  const [dismissedIds, setDismissedIds] = useState(() => readStoredIds(DISMISSED_KEY));
-  const [fullscreenDismissedIds, setFullscreenDismissedIds] = useState(() => readStoredIds(FULLSCREEN_DISMISSED_KEY));
+  const { user } = useAuth();
+  const userScope = user?.id ? `u_${user.id}` : (user?.role ? `role_${user.role}` : 'anon');
+  const dismissedKey = `sih_dismissed_alert_ids_${userScope}`;
+  const fullscreenKey = `sih_fullscreen_dismissed_alert_ids_${userScope}`;
+
+  const [dismissedIds, setDismissedIds] = useState(() => readStoredIds(dismissedKey));
+  const [fullscreenDismissedIds, setFullscreenDismissedIds] = useState(() => readStoredIds(fullscreenKey));
   const [isMuted, setIsMuted] = useState(false);
   const audioAlertRef = useRef(null);
 
+  // Reload stored dismissals when active user/role changes
+  useEffect(() => {
+    setDismissedIds(readStoredIds(dismissedKey));
+    setFullscreenDismissedIds(readStoredIds(fullscreenKey));
+  }, [dismissedKey, fullscreenKey]);
+
   // Sync dismissals to sessionStorage whenever they change
   useEffect(() => {
-    writeStoredIds(DISMISSED_KEY, dismissedIds);
-  }, [dismissedIds]);
+    writeStoredIds(dismissedKey, dismissedIds);
+  }, [dismissedKey, dismissedIds]);
 
   useEffect(() => {
-    writeStoredIds(FULLSCREEN_DISMISSED_KEY, fullscreenDismissedIds);
-  }, [fullscreenDismissedIds]);
+    writeStoredIds(fullscreenKey, fullscreenDismissedIds);
+  }, [fullscreenKey, fullscreenDismissedIds]);
 
   const activeAlerts = alerts.filter(
     (a) => a.active && !dismissedIds.includes(a.id)

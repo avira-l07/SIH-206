@@ -2,37 +2,100 @@ const prisma = require('../db');
 const { broadcastAlert } = require('../sockets/socketHandler');
 const { processTelemetryAndAlert, evaluateRisk } = require('../services/riskEngine.service');
 const { getWeatherData } = require('../services/weather.service');
-const { sendBroadcastSMS } = require('../services/sms.service');
+const { sendBroadcastSMS, normalizePhoneNumber } = require('../services/sms.service');
 const { sendPushBroadcast } = require('../services/push.service');
 
 /**
- * Asynchronous, non-blocking fan-out to public reach channels (SMS & Web Push)
- * Matches subscribers by region (or subscribers registered for 'All' / null).
+ * Intelligent regional containment matcher:
+ * Handles broad regional subscriptions (e.g. 'Mumbai', 'All Regions')
+ * matching specific wards/sectors (e.g. 'Kurla East - Mithi Basin', 'Dharavi Sector 5').
  */
-async function fanOutPublicAlerts(alert) {
+function isRegionMatch(subscriberRegion, alertRegion) {
+  if (!subscriberRegion) return true; // Enrolled with no region -> receives all alerts
+  const sub = subscriberRegion.trim().toLowerCase();
+  if (['all', 'all regions', 'all regions (national/statewide)', 'national', 'statewide', ''].includes(sub)) {
+    return true;
+  }
+  if (!alertRegion) return true;
+  const alertStr = alertRegion.trim().toLowerCase();
+
+  // Exact match
+  if (sub === alertStr) return true;
+
+  // Substring containment (e.g., alert 'Kurla East - Mumbai' contains sub 'Mumbai')
+  if (alertStr.includes(sub) || sub.includes(alertStr)) return true;
+
+  // Known metro sub-zones mapped to metropolitan region
+  const mumbaiSubAreas = [
+    'kurla', 'dharavi', 'bandra', 'deonar', 'andheri', 'dadar',
+    'colaba', 'thane', 'chembur', 'sion', 'mithi', 'worli', 'malad', 'borivali'
+  ];
+  if (sub.includes('mumbai') && mumbaiSubAreas.some((area) => alertStr.includes(area))) {
+    return true;
+  }
+  if (alertStr.includes('mumbai') && mumbaiSubAreas.some((area) => sub.includes(area))) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Asynchronous, non-blocking fan-out to public reach channels (SMS & Web Push)
+ * Matches subscribers across BOTH PhoneRegistration and User tables,
+ * normalizes phone numbers to E.164, and deduplicates.
+ */
+async function fanOutPublicAlerts(alert, explicitPhones = []) {
   try {
     const alertRegion = alert.region ? alert.region.trim() : null;
 
-    // Filter registrations matching alert's region or subscribed to all regions
-    const regionFilter = alertRegion
-      ? {
-          OR: [
-            { region: alertRegion },
-            { region: null },
-            { region: '' },
-            { region: 'All' },
-            { region: 'ALL' },
-            { region: 'All Regions' },
-          ],
-        }
-      : {};
-
-    const [phoneRecords, pushRecords] = await Promise.all([
-      prisma.phoneRegistration.findMany({ where: regionFilter }),
-      prisma.pushSubscription.findMany({ where: regionFilter }),
+    // Concurrently fetch:
+    // 1. Phone registrations from public no-login registry
+    // 2. Registered citizen users with phone numbers from User table
+    // 3. Web Push browser subscriptions
+    const [allPhoneRecords, allCitizenUsers, allPushSubs] = await Promise.all([
+      prisma.phoneRegistration.findMany(),
+      prisma.user.findMany({
+        where: { role: 'CITIZEN', phone: { not: null } },
+        select: { id: true, name: true, phone: true },
+      }),
+      prisma.pushSubscription.findMany(),
     ]);
 
-    const phoneNumbers = phoneRecords.map((r) => r.phoneNumber);
+    // 1. Filter and normalize phone numbers from PhoneRegistration
+    const recipientPhoneSet = new Set();
+
+    for (const record of allPhoneRecords) {
+      if (isRegionMatch(record.region, alertRegion)) {
+        const normalized = normalizePhoneNumber(record.phoneNumber);
+        if (normalized) recipientPhoneSet.add(normalized);
+      }
+    }
+
+    // 2. Include registered citizens from User table
+    // (Citizens are part of the protected population; if their location or region applies, enroll them)
+    for (const citizen of allCitizenUsers) {
+      if (citizen.phone) {
+        const normalized = normalizePhoneNumber(citizen.phone);
+        if (normalized) recipientPhoneSet.add(normalized);
+      }
+    }
+
+    // 3. Include any explicitly targeted numbers requested by administrator
+    if (Array.isArray(explicitPhones)) {
+      for (const raw of explicitPhones) {
+        const normalized = normalizePhoneNumber(raw);
+        if (normalized) recipientPhoneSet.add(normalized);
+      }
+    }
+
+    const uniquePhoneNumbers = Array.from(recipientPhoneSet);
+
+    // 4. Filter Web Push subscriptions
+    const matchingPushSubs = allPushSubs.filter((sub) =>
+      isRegionMatch(sub.region, alertRegion)
+    );
+
     const smsMessage = `[SIH EMERGENCY ALERT] ${alert.severity}: ${alert.hazardType} in ${alert.region}. ${alert.message}. Seek safe shelter.`;
 
     const pushPayload = {
@@ -49,18 +112,18 @@ async function fanOutPublicAlerts(alert) {
     };
 
     console.log(
-      `[Alert Fanout] Alert #${alert.id} (${alert.severity} in ${alert.region}) triggering public fan-out: ${phoneNumbers.length} SMS recipients, ${pushRecords.length} Web Push devices.`
+      `[Alert Fanout] Alert #${alert.id} (${alert.severity} in ${alert.region}) triggering public fan-out: ${uniquePhoneNumbers.length} SMS recipients (including registered citizens), ${matchingPushSubs.length} Web Push devices.`
     );
 
     // Concurrently fan out without blocking HTTP caller
     const [smsResult, pushResult] = await Promise.allSettled([
-      sendBroadcastSMS(phoneNumbers, smsMessage),
-      sendPushBroadcast(pushRecords, pushPayload),
+      sendBroadcastSMS(uniquePhoneNumbers, smsMessage),
+      sendPushBroadcast(matchingPushSubs, pushPayload),
     ]);
 
     return {
-      phoneCount: phoneNumbers.length,
-      pushCount: pushRecords.length,
+      phoneCount: uniquePhoneNumbers.length,
+      pushCount: matchingPushSubs.length,
       smsResult: smsResult.status === 'fulfilled' ? smsResult.value : null,
       pushResult: pushResult.status === 'fulfilled' ? pushResult.value : null,
     };
@@ -86,7 +149,7 @@ async function getAlerts(req, res) {
 
 async function createAlert(req, res) {
   try {
-    const { hazardType, severity, region, lat, lng, message } = req.body;
+    const { hazardType, severity, region, lat, lng, message, targetPhone, targetPhones } = req.body;
 
     const alert = await prisma.alert.create({
       data: {
@@ -103,8 +166,12 @@ async function createAlert(req, res) {
     // 1. Instant WebSocket broadcast to active app clients
     broadcastAlert(alert);
 
-    // 2. Non-blocking fan-out to public SMS registry & Web Push subscribers
-    fanOutPublicAlerts(alert).catch((err) =>
+    // 2. Non-blocking fan-out to public SMS registry, registered citizens & Web Push subscribers
+    const explicitList = [];
+    if (targetPhone) explicitList.push(targetPhone);
+    if (Array.isArray(targetPhones)) explicitList.push(...targetPhones);
+
+    fanOutPublicAlerts(alert, explicitList).catch((err) =>
       console.error('[Alert Fanout] Asynchronous delivery error:', err)
     );
 
