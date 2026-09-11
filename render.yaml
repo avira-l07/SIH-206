@@ -1,4 +1,4 @@
-﻿services:
+services:
   - type: web
     name: sih-206-backend
     runtime: node
@@ -9,9 +9,9 @@
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        sync: false   # set manually in Render dashboard — never commit the real URL
+        value: file:./dev.db
       - key: JWT_SECRET
-        sync: false   # set manually in Render dashboard
+        value: 0f62d848616b64ca89624e004c7266f6f152f2940eaa280842fddc6b8220c221
       - key: CORS_ORIGIN
         value: https://sih-206.vercel.app
       - key: PORT

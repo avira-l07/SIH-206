@@ -1,4 +1,5 @@
 require('dotenv').config();
+process.env.DATABASE_URL = 'file:./dev.db';
 const http = require('http');
 const os = require('os');
 const express = require('express');

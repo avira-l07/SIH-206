@@ -1,9 +1,13 @@
 const { PrismaClient } = require('@prisma/client');
 
-if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = 'file:./dev.db';
-}
+process.env.DATABASE_URL = 'file:./dev.db';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: 'file:./dev.db',
+    },
+  },
+});
 
 module.exports = prisma;
