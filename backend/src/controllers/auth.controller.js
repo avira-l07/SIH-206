@@ -124,7 +124,14 @@ async function login(req, res) {
       },
     });
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('[Login 500] Error authenticating user:', {
+      message: error.message,
+      code: error.code,
+      meta: error.meta,
+      stack: error.stack?.split('\n').slice(0, 4).join(' | '),
+      emailProvided: !!req.body?.email,
+      passwordProvided: !!req.body?.password,
+    });
     res.status(500).json({ error: 'Failed to authenticate user' });
   }
 }

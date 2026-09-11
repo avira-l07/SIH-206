@@ -1,0 +1,18 @@
+﻿services:
+  - type: web
+    name: sih-206-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false   # set manually in Render dashboard — never commit the real URL
+      - key: JWT_SECRET
+        sync: false   # set manually in Render dashboard
+      - key: CORS_ORIGIN
+        value: https://sih-206.vercel.app
+      - key: PORT
+        value: 10000

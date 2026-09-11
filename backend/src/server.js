@@ -35,7 +35,8 @@ app.set('trust proxy', 1);
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, curl, server-to-server)
-    if (!origin) return callback(null, true);
+    // Also allow Origin: null which browsers send for file:// pages (prod build opened directly)
+    if (!origin || origin === 'null') return callback(null, true);
 
     const allowedDomainPatterns = [
       'localhost',
@@ -75,6 +76,14 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '16kb' }));
 app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 
+// In development ALL browser requests arrive from 127.0.0.1/::1 — one IP bucket
+// for the whole machine, so suggestions floods kill the login budget. Skip rate
+// limiting for localhost entirely; production IPs never look like this.
+function isLocalhost(req) {
+  const ip = req.ip || req.connection?.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
 // Global rate limiter: 200 req / 15 min per IP (window can be tuned per-route)
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -82,7 +91,7 @@ const globalLimiter = rateLimit({
   standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
   legacyHeaders: false,
   message: { error: 'Too many requests from this IP, please try again after 15 minutes.' },
-  skip: (req) => req.path === '/api/health', // health checks are exempt
+  skip: (req) => req.path === '/api/health' || isLocalhost(req),
 });
 
 // Strict limiter for auth endpoints to prevent credential stuffing
@@ -92,6 +101,7 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many auth attempts. Please wait 15 minutes before retrying.' },
+  skip: isLocalhost,
 });
 
 // Tight limiter for SOS submissions -- fake SOS flood during real disaster is a safety issue
@@ -101,6 +111,7 @@ const sosLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'SOS rate limit exceeded. If this is a genuine emergency, wait 1 minute and retry.' },
+  skip: isLocalhost,
 });
 
 // Hazard report limiter
@@ -110,6 +121,7 @@ const hazardLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Hazard report rate limit exceeded. Please wait before submitting again.' },
+  skip: isLocalhost,
 });
 
 // Sync-batch limiter -- each flush is one batch; 10 per 15 min is generous for legit PWA use
@@ -119,6 +131,7 @@ const syncBatchLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Sync-batch rate limit exceeded.' },
+  skip: isLocalhost,
 });
 
 app.use(globalLimiter);

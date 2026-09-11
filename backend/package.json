@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "build": "prisma generate && prisma db push --accept-data-loss",
     "seed": "node prisma/seed.js",
     "postinstall": "prisma generate"
   },
