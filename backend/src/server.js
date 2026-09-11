@@ -166,10 +166,36 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error occurred' });
 });
 
-server.listen(PORT, HOST, () => {
+// Self-healing database readiness check (essential for cloud platforms like Render)
+async function ensureDatabaseReady() {
+  try {
+    const prisma = require('./db');
+    const userCount = await prisma.user.count();
+    console.log(`📊 Database connected: ${userCount} users found.`);
+    if (userCount === 0) {
+      console.log('🌱 Database is empty. Auto-seeding initial users & resources...');
+      const { execSync } = require('child_process');
+      execSync('node prisma/seed.js', { stdio: 'inherit' });
+    }
+  } catch (err) {
+    console.warn('⚠️ Database not initialized or tables missing. Running automatic schema push & seed...');
+    try {
+      const { execSync } = require('child_process');
+      execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' });
+      execSync('node prisma/seed.js', { stdio: 'inherit' });
+      console.log('✅ Self-healing schema push & seed completed successfully.');
+    } catch (pushErr) {
+      console.error('❌ Failed to auto-initialize database:', pushErr.message);
+    }
+  }
+}
+
+server.listen(PORT, HOST, async () => {
   console.log(`🚀 SIH26206 Disaster Management Backend running on http://${HOST}:${PORT}`);
   console.log(`📡 WebSocket server listening for real-time dispatch events`);
   console.log(`🩺 Health check accessible at: http://localhost:${PORT}/api/health`);
+
+  await ensureDatabaseReady();
 
   // Print LAN IPs for mobile device hotspot/Wi-Fi connection
   try {

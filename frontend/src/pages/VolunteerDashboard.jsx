@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
@@ -56,17 +56,24 @@ export default function VolunteerDashboard() {
     }
   }, []);
 
-  // Proactively query asset suggestions for active SOS incidents
+  // Track which SOS IDs we've already fetched suggestions for.
+  // Prevents re-fetching on every socket status update to an existing SOS.
+  const fetchedSosIds = useRef(new Set());
+
+  // Proactively query asset suggestions for active SOS incidents (once per id)
   useEffect(() => {
     const fetchSuggestions = async () => {
       const activeCalls = sosList.filter(
-        (s) => s.status === 'PENDING' || s.status === 'VERIFIED' || s.status === 'EN_ROUTE' || s.status === 'IN_PROGRESS'
+        (s) =>
+          (s.status === 'PENDING' || s.status === 'VERIFIED' || s.status === 'EN_ROUTE' || s.status === 'IN_PROGRESS') &&
+          !fetchedSosIds.current.has(s.id)  // skip already-fetched ids
       );
       if (activeCalls.length === 0) return;
 
       const suggestionsMap = {};
       await Promise.all(
         activeCalls.map(async (sos) => {
+          fetchedSosIds.current.add(sos.id); // mark before request to prevent concurrent duplicates
           try {
             const res = await api.get(
               `/assets/suggestions?lat=${sos.lat}&lng=${sos.lng}&hazardType=${sos.hazardType}`
@@ -75,11 +82,14 @@ export default function VolunteerDashboard() {
               suggestionsMap[sos.id] = res.data.suggestions[0];
             }
           } catch (err) {
-            // silent fail
+            // on failure, remove from cache so it retries next cycle
+            fetchedSosIds.current.delete(sos.id);
           }
         })
       );
-      setAssetSuggestions((prev) => ({ ...prev, ...suggestionsMap }));
+      if (Object.keys(suggestionsMap).length > 0) {
+        setAssetSuggestions((prev) => ({ ...prev, ...suggestionsMap }));
+      }
     };
 
     if (sosList.length > 0) {

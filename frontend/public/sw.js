@@ -45,7 +45,23 @@ self.addEventListener('activate', (event) => {
 // Fetch: specialized routing for live APIs, map tiles, and offline app shell
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  const url = new URL(request.url);
+
+  // Ignore non-http/https schemes (e.g. chrome-extension://, moz-extension://)
+  if (!request.url.startsWith('http://') && !request.url.startsWith('https://')) {
+    return;
+  }
+
+  // Only GET requests can be cached
+  if (request.method !== 'GET') {
+    return;
+  }
+
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch (e) {
+    return;
+  }
 
   // 1. Live API endpoints (/api/*) & WebSockets MUST bypass SW cache entirely
   if (url.pathname.startsWith('/api') || url.pathname.startsWith('/socket.io')) {
@@ -69,7 +85,7 @@ self.addEventListener('fetch', (event) => {
         try {
           const networkResponse = await fetch(request);
           if (networkResponse && networkResponse.status === 200) {
-            cache.put(request, networkResponse.clone());
+            cache.put(request, networkResponse.clone()).catch(() => {});
           }
           return networkResponse;
         } catch (err) {
@@ -92,7 +108,7 @@ self.addEventListener('fetch', (event) => {
         fetch(request)
           .then((networkResponse) => {
             if (networkResponse && networkResponse.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse));
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse).catch(() => {})).catch(() => {});
             }
           })
           .catch(() => {});
@@ -103,13 +119,13 @@ self.addEventListener('fetch', (event) => {
         const networkResponse = await fetch(request);
         if (networkResponse && networkResponse.status === 200 && request.method === 'GET') {
           const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, responseToCache));
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, responseToCache).catch(() => {})).catch(() => {});
         }
         return networkResponse;
       } catch (err) {
         // If offline and navigating to a page, return index.html shell
         if (request.mode === 'navigate') {
-          return caches.match('/index.html') || caches.match('/');
+          return (await caches.match('/index.html')) || (await caches.match('/'));
         }
         throw err;
       }

@@ -93,11 +93,40 @@ class EmergencyAudioAlert {
   }
 }
 
+// Persist dismissed alert IDs to sessionStorage so they survive page reloads.
+// sessionStorage is intentional: clears when tab is closed, so a new session
+// (e.g. next morning) will still show active alerts. Never silences fresh alerts.
+const DISMISSED_KEY = 'sih_dismissed_alert_ids';
+const FULLSCREEN_DISMISSED_KEY = 'sih_fullscreen_dismissed_alert_ids';
+
+function readStoredIds(key) {
+  try {
+    return JSON.parse(sessionStorage.getItem(key) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredIds(key, ids) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(ids));
+  } catch {}
+}
+
 export default function AlertBanner({ alerts = [], onSelectAlert }) {
-  const [dismissedIds, setDismissedIds] = useState([]);
-  const [fullscreenDismissedIds, setFullscreenDismissedIds] = useState([]);
+  const [dismissedIds, setDismissedIds] = useState(() => readStoredIds(DISMISSED_KEY));
+  const [fullscreenDismissedIds, setFullscreenDismissedIds] = useState(() => readStoredIds(FULLSCREEN_DISMISSED_KEY));
   const [isMuted, setIsMuted] = useState(false);
   const audioAlertRef = useRef(null);
+
+  // Sync dismissals to sessionStorage whenever they change
+  useEffect(() => {
+    writeStoredIds(DISMISSED_KEY, dismissedIds);
+  }, [dismissedIds]);
+
+  useEffect(() => {
+    writeStoredIds(FULLSCREEN_DISMISSED_KEY, fullscreenDismissedIds);
+  }, [fullscreenDismissedIds]);
 
   const activeAlerts = alerts.filter(
     (a) => a.active && !dismissedIds.includes(a.id)
