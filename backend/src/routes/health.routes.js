@@ -23,7 +23,7 @@ router.get('/', async (req, res) => {
       ...(dbError ? { error: dbError } : {}),
     },
     service: 'SIH26206 Disaster Management Backend API',
-    version: '1.0.1',
+    version: '1.0.2',
   });
 });
 
