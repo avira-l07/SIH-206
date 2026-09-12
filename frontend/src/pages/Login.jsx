@@ -4,17 +4,30 @@ import { Shield, AlertTriangle, User, LifeBuoy, ArrowRight, Loader2 } from 'luci
 
 export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts }) {
   const { login } = useAuth();
-  const [email, setEmail] = useState('citizen@sih.gov.in');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const handleEmailChange = (val) => {
+    setEmail(val);
+    // If the password was prefilled with demo credentials, clear it when user types a custom email
+    if (password === 'password123') {
+      setPassword('');
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
+      setError('Please provide registered email and password.');
+      return;
+    }
     setLoading(true);
     try {
-      await login(email, password);
+      await login(cleanEmail, password);
     } catch (err) {
       console.error('Login error', err);
       setError(err.response?.data?.error || 'Authentication failed. Verify credentials.');
@@ -94,7 +107,7 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts }) {
               type="email"
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => handleEmailChange(e.target.value)}
               className="w-full p-2.5 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-sm text-[#14231F] focus:outline-none focus:border-[#14231F]"
               placeholder="e.g. citizen@sih.gov.in"
             />

@@ -127,6 +127,32 @@ function MapFocusController({ center, zoom }) {
   return null;
 }
 
+// Bounds helper to fit all incidents dynamically on the map
+function MapBoundsController({ triggerFit, incidents = [] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!triggerFit) return;
+    const points = incidents
+      .filter((i) => i && typeof i.lat === 'number' && typeof i.lng === 'number')
+      .map((i) => [i.lat, i.lng]);
+
+    if (points.length > 0) {
+      const bounds = L.latLngBounds(points);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14, duration: 1.2 });
+    }
+  }, [triggerFit, incidents, map]);
+  return null;
+}
+
+const REGION_COORDINATES = {
+  mumbai: [19.0760, 72.8777],
+  delhi: [28.6139, 77.2090],
+  chennai: [13.0827, 80.2707],
+  kutch: [23.2420, 69.6669],
+  kolkata: [22.5726, 88.3639],
+  kerala: [11.6854, 76.1320],
+};
+
 export default function MapView({
   alerts = [],
   sosRequests = [],
@@ -140,10 +166,95 @@ export default function MapView({
   onViewSupplies,
   userRole,
 }) {
-  const defaultCenter = [userCoords?.lat || 19.0760, userCoords?.lng || 72.8777];
+  const [fitTrigger, setFitTrigger] = React.useState(0);
+  const [selectedRegionJump, setSelectedRegionJump] = React.useState('');
+  const [activeCenter, setActiveCenter] = React.useState(null);
+  const [isOffline, setIsOffline] = React.useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+
+  React.useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Dynamic initial center: focusCoords -> userCoords -> first active alert/shelter -> national fallback
+  const defaultCenter = React.useMemo(() => {
+    if (focusCoords && focusCoords[0] && focusCoords[1]) {
+      return focusCoords;
+    }
+    if (userCoords?.lat && userCoords?.lng) {
+      return [userCoords.lat, userCoords.lng];
+    }
+    if (alerts.length > 0 && typeof alerts[0].lat === 'number') {
+      return [alerts[0].lat, alerts[0].lng];
+    }
+    if (shelters.length > 0 && typeof shelters[0].lat === 'number') {
+      return [shelters[0].lat, shelters[0].lng];
+    }
+    return [19.0760, 72.8777]; // Default fallback if no data
+  }, [focusCoords, userCoords, alerts, shelters]);
+
+  const allIncidents = React.useMemo(() => {
+    return [...alerts, ...sosRequests, ...shelters, ...hazardReports];
+  }, [alerts, sosRequests, shelters, hazardReports]);
+
+  const handleRegionJump = (key) => {
+    setSelectedRegionJump(key);
+    if (REGION_COORDINATES[key]) {
+      setActiveCenter(REGION_COORDINATES[key]);
+    }
+  };
+
+  const handleFitAll = () => {
+    setFitTrigger((prev) => prev + 1);
+  };
 
   return (
     <div className="w-full h-full min-h-[420px] rounded border border-[#D8D3C7] overflow-hidden relative shadow-xs">
+      {/* Tactical Map Toolbar (Region Jump & Fit All Incidents) */}
+      <div className="absolute top-2 right-2 z-[1000] flex flex-wrap items-center gap-1.5 bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded p-1.5 shadow-md font-mono text-xs">
+        <button
+          type="button"
+          onClick={handleFitAll}
+          className="px-2.5 py-1 bg-[#14231F] text-white hover:bg-black rounded text-[11px] font-bold flex items-center gap-1 transition-transform active:scale-95"
+          title="Zoom to fit all active alerts, shelters, and incidents"
+        >
+          <span>⛶ FIT ALL INCIDENTS</span>
+        </button>
+
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-[#14231F]/70 font-semibold">JUMP:</span>
+          <select
+            value={selectedRegionJump}
+            onChange={(e) => handleRegionJump(e.target.value)}
+            className="bg-[#F6F4EF] border border-[#D8D3C7] rounded px-1.5 py-1 text-[11px] text-[#14231F] font-mono focus:outline-none focus:border-[#14231F]"
+          >
+            <option value="">Quick Region...</option>
+            <option value="mumbai">Mumbai Metro</option>
+            <option value="delhi">Delhi NCR</option>
+            <option value="chennai">Chennai Sector</option>
+            <option value="kutch">Kutch / Gujarat</option>
+            <option value="kolkata">Kolkata / Sundarbans</option>
+            <option value="kerala">Kerala / Wayanad</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Offline Tile Notice (Labeled Limitation) */}
+      {isOffline && (
+        <div className="absolute bottom-2 left-2 right-2 z-[1000] bg-[#14231F]/90 text-[#F6F4EF] border border-[#D8D3C7] rounded px-3 py-1.5 text-xs font-mono flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-2">
+            <span className="text-amber-400 font-bold">⚠️ OFFLINE MODE:</span>
+            <span>Map tiles limited to cached areas, live markers remain active.</span>
+          </div>
+        </div>
+      )}
+
       <MapContainer
         center={defaultCenter}
         zoom={12}
@@ -155,7 +266,8 @@ export default function MapView({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        <MapFocusController center={focusCoords} />
+        <MapFocusController center={activeCenter || focusCoords} />
+        <MapBoundsController triggerFit={fitTrigger} incidents={allIncidents} />
 
         {/* User Location Marker */}
         {userCoords && (
@@ -169,15 +281,18 @@ export default function MapView({
           </Marker>
         )}
 
-        {/* Active Hazard Radii & Circles */}
+        {/* Active Hazard Radii & Circles (Leaflet circle radius = radiusKm * 1000 meters) */}
         {alerts.map((alert) => {
           const isCritical = alert.severity === 'CRITICAL';
           const color = isCritical ? '#B23A2E' : '#C97A2B';
+          const radiusKm = alert.radiusKm !== undefined && alert.radiusKm !== null ? Number(alert.radiusKm) : 5.0;
+          const radiusMeters = radiusKm * 1000;
+
           return (
             <React.Fragment key={`alert-${alert.id}`}>
               <Circle
                 center={[alert.lat, alert.lng]}
-                radius={isCritical ? 3500 : 2000}
+                radius={radiusMeters}
                 pathOptions={{
                   color,
                   fillColor: color,
@@ -196,6 +311,9 @@ export default function MapView({
                       {alert.severity} // {alert.hazardType}
                     </div>
                     <div className="font-bold text-sm text-[#14231F]">{alert.region}</div>
+                    <div className="text-[11px] font-mono text-[#B23A2E] font-bold mt-0.5">
+                      Hazard Radius: {radiusKm} km ({radiusMeters.toLocaleString()}m perimeter)
+                    </div>
                     <div className="text-[#14231F]/80 my-1">{alert.message}</div>
                     <div className="text-[10px] font-mono text-[#14231F]/60">
                       Coordinates: {alert.lat.toFixed(4)}, {alert.lng.toFixed(4)}

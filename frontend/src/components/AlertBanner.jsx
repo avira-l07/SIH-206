@@ -247,6 +247,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
 
   const [dismissedIds, setDismissedIds] = useState(() => readStoredIds(dismissedKey));
   const [fullscreenDismissedIds, setFullscreenDismissedIds] = useState(() => readStoredIds(fullscreenKey));
+  const [currentScopeKey, setCurrentScopeKey] = useState(dismissedKey);
   const [isMuted, setIsMuted] = useState(false);
   const [alarmState, setAlarmState] = useState({
     isPlaying: false,
@@ -255,13 +256,15 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
     autoSilenced: false,
   });
 
-  const audioAlertRef = useRef(null);
-
-  // Reload stored dismissals when active user/role changes
-  useEffect(() => {
+  // State synchronization pattern: adjust state during render on key change
+  // so no effect can write stale dismissals from the previous user/role into the new scope.
+  if (currentScopeKey !== dismissedKey) {
+    setCurrentScopeKey(dismissedKey);
     setDismissedIds(readStoredIds(dismissedKey));
     setFullscreenDismissedIds(readStoredIds(fullscreenKey));
-  }, [dismissedKey, fullscreenKey]);
+  }
+
+  const audioAlertRef = useRef(null);
 
   // Sync dismissals to sessionStorage whenever they change
   useEffect(() => {

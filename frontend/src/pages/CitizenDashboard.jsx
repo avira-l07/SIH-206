@@ -152,6 +152,30 @@ export default function CitizenDashboard() {
     }
   };
 
+  const handleUpdateLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setUserCoords(coords);
+        setFocusCoords([coords.lat, coords.lng]);
+        try {
+          await api.patch('/auth/location', coords);
+          alert(`Your GPS location was updated successfully (${coords.lat.toFixed(4)}°N, ${coords.lng.toFixed(4)}°E). Precision alert radius matching is now active!`);
+        } catch (err) {
+          console.error('Failed to sync location with server:', err);
+        }
+      },
+      (err) => {
+        alert('Could not acquire your current location: ' + err.message);
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
+  };
+
   const activeSOS = mySOSList.find((s) => s.status !== 'RESOLVED');
   // Pending citizen rescue closure loop (Item 1.3)
   const pendingVerificationSOS = mySOSList.find(
@@ -186,6 +210,16 @@ export default function CitizenDashboard() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              id="citizen-update-gps-btn"
+              onClick={handleUpdateLocation}
+              className="flex items-center gap-1.5 px-3 py-3 bg-[#FAF8F5] hover:bg-[#EFECE4] border border-[#D8D3C7] text-[#14231F] font-mono text-xs rounded transition-colors"
+              title="Acquire current browser GPS coordinates and sync with alert radius delivery system"
+            >
+              <span>📍 UPDATE MY GPS</span>
+            </button>
+
             <button
               id="report-hazard-btn"
               onClick={() => setHazardModalOpen(true)}

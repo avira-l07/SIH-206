@@ -9,6 +9,7 @@ import HazardConfirmationPrompt from '../components/HazardConfirmationPrompt';
 import OfflineSimulationDrawer from '../components/OfflineSimulationDrawer';
 import { LifeBuoy, MapPin, Phone, Shield, ArrowUpRight, Kanban, Map, Lock, Package, AlertTriangle } from 'lucide-react';
 import ShelterSuppliesModal from '../components/ShelterSuppliesModal';
+import VolunteerShelterStore from '../components/VolunteerShelterStore';
 import { calculateDistanceKm } from '../services/haversine';
 
 export default function VolunteerDashboard() {
@@ -20,13 +21,39 @@ export default function VolunteerDashboard() {
   const [sosList, setSosList] = useState([]);
   const [hazardReports, setHazardReports] = useState([]);
   const [activeTab, setActiveTab] = useState('PENDING'); // PENDING, IN_PROGRESS, RESOLVED
-  const [viewMode, setViewMode] = useState('MAP'); // 'MAP' or 'KANBAN'
+  const [viewMode, setViewMode] = useState('MAP'); // 'MAP', 'KANBAN', 'STORE'
   const [focusCoords, setFocusCoords] = useState(null);
-  const [volunteerCoords, setVolunteerCoords] = useState({ lat: 19.0596, lng: 72.8295 }); // Bandra default
+  const [volunteerCoords, setVolunteerCoords] = useState({ lat: user?.lat || 19.0596, lng: user?.lng || 72.8295 });
   const [actionLoading, setActionLoading] = useState(false);
+  const [locLoading, setLocLoading] = useState(false);
   const [assetSuggestions, setAssetSuggestions] = useState({});
   const [restockAlert, setRestockAlert] = useState(null);
   const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
+
+  const handleUpdateLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+    setLocLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setVolunteerCoords(coords);
+        try {
+          await api.patch('/auth/location', coords);
+        } catch (err) {
+          console.warn('Failed to persist location update:', err);
+        } finally {
+          setLocLoading(false);
+        }
+      },
+      (err) => {
+        alert('Could not detect location: ' + err.message);
+        setLocLoading(false);
+      }
+    );
+  };
 
   const loadData = async () => {
     try {
@@ -253,9 +280,21 @@ export default function VolunteerDashboard() {
                 FIELD DISPATCH CONSOLE // RESCUE VOLUNTEER
               </h1>
             </div>
-            <p className="text-xs text-[#14231F]/70 font-mono mt-0.5">
-              Responder ID: {user?.name || 'Field Unit'} • GPS: {volunteerCoords.lat.toFixed(4)}°N, {volunteerCoords.lng.toFixed(4)}°E
-            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs text-[#14231F]/70 font-mono mt-0.5">
+                Responder ID: {user?.name || 'Field Unit'} • GPS: {volunteerCoords.lat.toFixed(4)}°N, {volunteerCoords.lng.toFixed(4)}°E
+              </p>
+              <button
+                type="button"
+                id="update-volunteer-location-btn"
+                disabled={locLoading}
+                onClick={handleUpdateLocation}
+                className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] text-[#14231F] text-[10px] font-mono rounded font-semibold transition-colors disabled:opacity-50"
+                title="Detect and persist real GPS location"
+              >
+                {locLoading ? 'Detecting...' : '📍 Update My GPS'}
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -294,6 +333,17 @@ export default function VolunteerDashboard() {
                 <Kanban className="w-3.5 h-3.5" />
                 <span>TRIAGE KANBAN</span>
               </button>
+              <button
+                type="button"
+                id="view-mode-store-btn"
+                onClick={() => setViewMode('STORE')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
+                  viewMode === 'STORE' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span>SHELTER STORE</span>
+              </button>
             </div>
 
             <div className="hidden sm:flex items-center gap-2 font-mono text-xs">
@@ -320,7 +370,7 @@ export default function VolunteerDashboard() {
           }
         />
 
-        {/* Dynamic Main Body: Map View or Kanban View */}
+        {/* Dynamic Main Body: Map View, Kanban View, or Shelter Store */}
         {viewMode === 'KANBAN' ? (
           <TriageKanban
             sosList={sosList}
@@ -333,6 +383,14 @@ export default function VolunteerDashboard() {
               setFocusCoords(coords);
               setViewMode('MAP');
             }}
+          />
+        ) : viewMode === 'STORE' ? (
+          <VolunteerShelterStore
+            shelters={shelters}
+            currentVolunteer={user}
+            onShelterUpdated={(updated) =>
+              setShelters((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+            }
           />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">

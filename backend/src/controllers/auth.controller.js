@@ -5,9 +5,12 @@ const { JWT_SECRET } = require('../middleware/auth.middleware');
 
 async function register(req, res) {
   try {
-    const { name, email, password, role = 'CITIZEN', phone, lat, lng } = req.body;
+    const { name, email, password, role = 'CITIZEN', phone, region, lat, lng } = req.body;
 
-    if (!name || !email || !password) {
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanPassword = typeof password === 'string' ? password : '';
+
+    if (!name || !cleanEmail || !cleanPassword) {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
 
@@ -20,37 +23,39 @@ async function register(req, res) {
     const resolvedRole = ['CITIZEN', 'VOLUNTEER'].includes(role) ? role : 'CITIZEN';
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (typeof email !== 'string' || !emailRegex.test(email) || email.length > 254) {
+    if (!emailRegex.test(cleanEmail) || cleanEmail.length > 254) {
       return res.status(400).json({ error: 'A valid email address is required (max 254 characters)' });
     }
 
-    if (typeof password !== 'string' || password.length < 6) {
+    if (cleanPassword.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters long' });
     }
-    if (password.length > 72) {
+    if (cleanPassword.length > 72) {
       return res.status(400).json({ error: 'Password must be 72 characters or fewer' });
     }
 
     const trimmedName = String(name).trim().slice(0, 100);
     const cleanPhone = phone ? String(phone).replace(/[^\d+\-\s]/g, '').slice(0, 20) : null;
+    const cleanRegion = region ? String(region).trim().slice(0, 100) : null;
     const validLat = typeof lat === 'number' && lat >= -90 && lat <= 90 ? lat : null;
     const validLng = typeof lng === 'number' && lng >= -180 && lng <= 180 ? lng : null;
 
-    const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const existing = await prisma.user.findUnique({ where: { email: cleanEmail } });
     if (existing) {
       return res.status(409).json({ error: 'User with this email already exists' });
     }
 
     const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+    const passwordHash = await bcrypt.hash(cleanPassword, salt);
 
     const user = await prisma.user.create({
       data: {
         name: trimmedName,
-        email: email.toLowerCase(),
+        email: cleanEmail,
         passwordHash,
         role: resolvedRole,
         phone: cleanPhone,
+        region: cleanRegion,
         lat: validLat,
         lng: validLng,
         trusted: false,
@@ -72,6 +77,7 @@ async function register(req, res) {
         email: user.email,
         role: user.role,
         phone: user.phone,
+        region: user.region,
         lat: user.lat,
         lng: user.lng,
         trusted: user.trusted,
@@ -87,16 +93,19 @@ async function login(req, res) {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanPassword = typeof password === 'string' ? password : '';
+
+    if (!cleanEmail || !cleanPassword) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const validPassword = await bcrypt.compare(password, user.passwordHash);
+    const validPassword = await bcrypt.compare(cleanPassword, user.passwordHash);
     if (!validPassword) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -116,6 +125,7 @@ async function login(req, res) {
         email: user.email,
         role: user.role,
         phone: user.phone,
+        region: user.region,
         lat: user.lat,
         lng: user.lng,
         trusted: user.trusted,
@@ -146,6 +156,7 @@ async function getMe(req, res) {
         email: true,
         role: true,
         phone: true,
+        region: true,
         lat: true,
         lng: true,
         trusted: true,
@@ -298,6 +309,39 @@ async function setUserTrust(req, res) {
   }
 }
 
+async function updateLocation(req, res) {
+  try {
+    const { lat, lng, region } = req.body;
+    const validLat = typeof lat === 'number' && lat >= -90 && lat <= 90 ? lat : null;
+    const validLng = typeof lng === 'number' && lng >= -180 && lng <= 180 ? lng : null;
+    const cleanRegion = region ? String(region).trim().slice(0, 100) : undefined;
+
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        ...(validLat !== null ? { lat: validLat } : {}),
+        ...(validLng !== null ? { lng: validLng } : {}),
+        ...(cleanRegion !== undefined ? { region: cleanRegion } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        phone: true,
+        region: true,
+        lat: true,
+        lng: true,
+      },
+    });
+
+    res.status(200).json({ message: 'Location updated successfully', user: updated });
+  } catch (error) {
+    console.error('Error updating location:', error);
+    res.status(500).json({ error: 'Failed to update user location' });
+  }
+}
+
 async function getUsers(req, res) {
   try {
     const users = await prisma.user.findMany({
@@ -315,6 +359,7 @@ module.exports = {
   register,
   login,
   getMe,
+  updateLocation,
   updateSafetyStatus,
   lookupSafetyStatus,
   setUserTrust,

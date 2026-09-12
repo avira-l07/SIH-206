@@ -8,6 +8,7 @@ router.post('/register', validateRole, authController.register);
 router.post('/login', authController.login);
 router.get('/me', authenticateToken, authController.getMe);
 router.patch('/safety-status', authenticateToken, authController.updateSafetyStatus);
+router.patch('/location', authenticateToken, authController.updateLocation);
 router.get('/safety-lookup', authenticateToken, authController.lookupSafetyStatus);
 router.get('/users', authenticateToken, requireRole(['ADMIN']), authController.getUsers);
 router.patch('/users/:id/trust', authenticateToken, requireRole(['ADMIN']), authController.setUserTrust);

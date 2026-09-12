@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Shield, AlertTriangle, ArrowRight, Loader2 } from 'lucide-react';
+import { Shield, AlertTriangle, ArrowRight, Loader2, MapPin } from 'lucide-react';
 
 export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
   const { register } = useAuth();
@@ -11,6 +11,29 @@ export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
   const [role, setRole] = useState('CITIZEN');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [coords, setCoords] = useState(null);
+  const [locationStatus, setLocationStatus] = useState('Detecting browser geolocation...');
+
+  // Capture real browser geolocation on mount (Issue 4 / Component 3 & 4)
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = parseFloat(pos.coords.latitude.toFixed(5));
+          const lng = parseFloat(pos.coords.longitude.toFixed(5));
+          setCoords({ lat, lng });
+          setLocationStatus(`GPS acquired: ${lat}°N, ${lng}°E`);
+        },
+        (err) => {
+          console.warn('Browser geolocation denied or unavailable:', err.message);
+          setLocationStatus('GPS unavailable (region containment fallback active)');
+        },
+        { timeout: 8000, enableHighAccuracy: true }
+      );
+    } else {
+      setLocationStatus('Geolocation unsupported on this client');
+    }
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -18,13 +41,13 @@ export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
     setLoading(true);
     try {
       await register({
-        name,
-        email,
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
         password,
-        phone,
+        phone: phone.trim(),
         role,
-        lat: 19.0760,
-        lng: 72.8777,
+        lat: coords ? coords.lat : null,
+        lng: coords ? coords.lng : null,
       });
     } catch (err) {
       console.error('Registration failed', err);
@@ -131,6 +154,12 @@ export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
               className="w-full p-2.5 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-sm text-[#14231F] focus:outline-none focus:border-[#14231F]"
               placeholder="••••••••"
             />
+          </div>
+
+          {/* GPS status indication */}
+          <div className="flex items-center gap-1.5 text-[11px] font-mono text-[#14231F]/70 bg-[#F6F4EF] p-2 rounded border border-[#D8D3C7]">
+            <MapPin className="w-3.5 h-3.5 text-[#2E6E4E] shrink-0" />
+            <span className="truncate">{locationStatus}</span>
           </div>
 
           <button

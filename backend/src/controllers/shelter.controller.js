@@ -13,25 +13,62 @@ const {
  * GREEN  otherwise
  */
 function computeShelterStatus(
-  currentOccupancy,
+  arg1,
   capacity,
   waterOk = true,
   rationsOk = true,
   waterLitersRemaining = null,
   waterThreshold = 200,
   rationsUnitsRemaining = null,
-  rationsThreshold = 50
+  rationsThreshold = 50,
+  medicalKitsRemaining = null,
+  medicalThreshold = 10,
+  blanketsRemaining = null,
+  blanketsThreshold = 30
 ) {
-  const cap = Math.max(1, capacity);
-  const pct = currentOccupancy / cap;
+  let occ, cap, wOk, rOk, wRem, wThresh, rRem, rThresh, mRem, mThresh, bRem, bThresh;
+  if (typeof arg1 === 'object' && arg1 !== null) {
+    occ = arg1.currentOccupancy ?? 0;
+    cap = arg1.capacity ?? 1;
+    wOk = arg1.waterOk !== false;
+    rOk = arg1.rationsOk !== false;
+    wRem = arg1.waterLitersRemaining;
+    wThresh = arg1.waterThreshold ?? 200;
+    rRem = arg1.rationsUnitsRemaining;
+    rThresh = arg1.rationsThreshold ?? 50;
+    mRem = arg1.medicalKitsRemaining;
+    mThresh = arg1.medicalThreshold ?? 10;
+    bRem = arg1.blanketsRemaining;
+    bThresh = arg1.blanketsThreshold ?? 30;
+  } else {
+    occ = arg1 ?? 0;
+    cap = capacity ?? 1;
+    wOk = waterOk !== false;
+    rOk = rationsOk !== false;
+    wRem = waterLitersRemaining;
+    wThresh = waterThreshold ?? 200;
+    rRem = rationsUnitsRemaining;
+    rThresh = rationsThreshold ?? 50;
+    mRem = medicalKitsRemaining;
+    mThresh = medicalThreshold ?? 10;
+    bRem = blanketsRemaining;
+    bThresh = blanketsThreshold ?? 30;
+  }
 
-  const hasNumericWater = typeof waterLitersRemaining === 'number' && !isNaN(waterLitersRemaining);
-  const hasNumericRations = typeof rationsUnitsRemaining === 'number' && !isNaN(rationsUnitsRemaining);
+  const safeCap = Math.max(1, cap);
+  const pct = occ / safeCap;
 
-  const isWaterBreached = waterOk === false || (hasNumericWater && waterLitersRemaining < waterThreshold);
-  const isRationsBreached = rationsOk === false || (hasNumericRations && rationsUnitsRemaining < rationsThreshold);
+  const hasNumWater = typeof wRem === 'number' && !isNaN(wRem);
+  const hasNumRations = typeof rRem === 'number' && !isNaN(rRem);
+  const hasNumMedical = typeof mRem === 'number' && !isNaN(mRem);
+  const hasNumBlankets = typeof bRem === 'number' && !isNaN(bRem);
 
-  if (pct >= 0.9 || isWaterBreached || isRationsBreached) {
+  const isWaterBreached = !wOk || (hasNumWater && wRem < wThresh);
+  const isRationsBreached = !rOk || (hasNumRations && rRem < rThresh);
+  const isMedicalBreached = hasNumMedical && mRem < mThresh;
+  const isBlanketsBreached = hasNumBlankets && bRem < bThresh;
+
+  if (pct >= 0.9 || isWaterBreached || isRationsBreached || isMedicalBreached || isBlanketsBreached) {
     return 'RED';
   }
   if (pct >= 0.7) {
@@ -146,6 +183,8 @@ async function logShelterEventInternal({
   deltaOccupancy = 0,
   deltaWaterLiters = 0,
   deltaRations = 0,
+  deltaMedicalKits = 0,
+  deltaBlankets = 0,
   waterOk = null,
   rationsOk = null,
   reason = 'Field logistics adjustment',
@@ -181,6 +220,8 @@ async function logShelterEventInternal({
   const dOcc = parseInt(deltaOccupancy) || 0;
   const dWater = parseInt(deltaWaterLiters) || 0;
   const dRat = parseInt(deltaRations) || 0;
+  const dMed = parseInt(deltaMedicalKits) || 0;
+  const dBlk = parseInt(deltaBlankets) || 0;
 
   // Server-side bounds clamping against real-time database state (Fix 5)
   const newOccupancy = Math.max(0, Math.min(existingShelter.capacity, existingShelter.currentOccupancy + dOcc));
@@ -192,20 +233,32 @@ async function logShelterEventInternal({
     existingShelter.rationsUnitsRemaining !== null
       ? Math.max(0, existingShelter.rationsUnitsRemaining + dRat)
       : null;
+  const newMedicalKits =
+    existingShelter.medicalKitsRemaining !== null
+      ? Math.max(0, existingShelter.medicalKitsRemaining + dMed)
+      : null;
+  const newBlankets =
+    existingShelter.blanketsRemaining !== null
+      ? Math.max(0, existingShelter.blanketsRemaining + dBlk)
+      : null;
 
   const effectiveWaterOk = typeof waterOk === 'boolean' ? waterOk : existingShelter.waterOk;
   const effectiveRationsOk = typeof rationsOk === 'boolean' ? rationsOk : existingShelter.rationsOk;
 
-  const newStatus = computeShelterStatus(
-    newOccupancy,
-    existingShelter.capacity,
-    effectiveWaterOk,
-    effectiveRationsOk,
-    newWaterLiters,
-    existingShelter.waterThreshold,
-    newRations,
-    existingShelter.rationsThreshold
-  );
+  const newStatus = computeShelterStatus({
+    currentOccupancy: newOccupancy,
+    capacity: existingShelter.capacity,
+    waterLitersRemaining: newWaterLiters,
+    waterThreshold: existingShelter.waterThreshold,
+    rationsUnitsRemaining: newRations,
+    rationsThreshold: existingShelter.rationsThreshold,
+    medicalKitsRemaining: newMedicalKits,
+    medicalThreshold: existingShelter.medicalThreshold,
+    blanketsRemaining: newBlankets,
+    blanketsThreshold: existingShelter.blanketsThreshold,
+    waterOk: effectiveWaterOk,
+    rationsOk: effectiveRationsOk,
+  });
 
   // Detect genuine threshold-crossing event (previous >= threshold and now < threshold)
   const waterCrossed =
@@ -218,10 +271,17 @@ async function logShelterEventInternal({
     newRations < existingShelter.rationsThreshold &&
     (existingShelter.rationsUnitsRemaining === null || existingShelter.rationsUnitsRemaining >= existingShelter.rationsThreshold);
 
+  const medicalCrossed =
+    typeof newMedicalKits === 'number' &&
+    newMedicalKits < existingShelter.medicalThreshold &&
+    (existingShelter.medicalKitsRemaining === null || existingShelter.medicalKitsRemaining >= existingShelter.medicalThreshold);
+
   const shelterUpdateData = {
     currentOccupancy: newOccupancy,
     waterLitersRemaining: newWaterLiters,
     rationsUnitsRemaining: newRations,
+    medicalKitsRemaining: newMedicalKits,
+    blanketsRemaining: newBlankets,
     status: newStatus,
     lastAuditedAt: new Date(),
   };
@@ -235,6 +295,8 @@ async function logShelterEventInternal({
         deltaOccupancy: dOcc,
         deltaWaterLiters: dWater,
         deltaRations: dRat,
+        deltaMedicalKits: dMed,
+        deltaBlankets: dBlk,
         reason: String(reason || 'Field logistics adjustment').trim().slice(0, 500),
         operatorName: String(operatorName || 'Field Operator').trim().slice(0, 100),
         idempotencyKey: idempotencyKey ? String(idempotencyKey).slice(0, 100) : null,
@@ -249,13 +311,19 @@ async function logShelterEventInternal({
 
   broadcastShelterAudit(updatedShelter);
 
-  if (waterCrossed || rationsCrossed) {
+  if (waterCrossed || rationsCrossed || medicalCrossed) {
+    const criticalList = [];
+    if (waterCrossed) criticalList.push('WATER');
+    if (rationsCrossed) criticalList.push('RATIONS');
+    if (medicalCrossed) criticalList.push('MEDICAL');
     broadcastRestockNeeded(updatedShelter, {
-      resourceType: waterCrossed && rationsCrossed ? 'WATER & RATIONS' : waterCrossed ? 'WATER' : 'RATIONS',
+      resourceType: criticalList.join(' & '),
       waterLitersRemaining: newWaterLiters,
       waterThreshold: existingShelter.waterThreshold,
       rationsUnitsRemaining: newRations,
       rationsThreshold: existingShelter.rationsThreshold,
+      medicalKitsRemaining: newMedicalKits,
+      medicalThreshold: existingShelter.medicalThreshold,
     });
   }
 
@@ -387,6 +455,8 @@ async function logShelterEvent(req, res) {
       deltaOccupancy = 0,
       deltaWaterLiters = 0,
       deltaRations = 0,
+      deltaMedicalKits = 0,
+      deltaBlankets = 0,
       reason = 'Field logistics adjustment',
       operatorName = req.user ? req.user.name : 'Field Operator',
       idempotencyKey = null,
@@ -398,6 +468,8 @@ async function logShelterEvent(req, res) {
       deltaOccupancy,
       deltaWaterLiters,
       deltaRations,
+      deltaMedicalKits,
+      deltaBlankets,
       reason,
       operatorName,
       idempotencyKey,

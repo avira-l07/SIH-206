@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import ShelterSuppliesModal from '../components/ShelterSuppliesModal';
+import AdminShelterRollup from '../components/AdminShelterRollup';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -32,7 +33,7 @@ export default function AdminDashboard() {
   const [sosList, setSosList] = useState([]);
   const [hazardReports, setHazardReports] = useState([]);
   const [focusCoords, setFocusCoords] = useState(null);
-  const [viewMode, setViewMode] = useState('MAP'); // 'MAP' or 'KANBAN'
+  const [viewMode, setViewMode] = useState('MAP'); // 'MAP', 'KANBAN', 'SHELTERS', or 'BROADCASTS'
   const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
   const [restockAlert, setRestockAlert] = useState(null);
 
@@ -44,6 +45,7 @@ export default function AdminDashboard() {
     region: 'Kurla East - Mithi Basin',
     lat: 19.0726,
     lng: 72.8845,
+    radiusKm: 5.0,
     message: 'Water levels rising rapidly (75mm/h). Immediate evacuation ordered for ground-floor residents.',
   });
   const [broadcastLoading, setBroadcastLoading] = useState(false);
@@ -171,6 +173,7 @@ export default function AdminDashboard() {
         ...alertForm,
         lat: parseFloat(alertForm.lat),
         lng: parseFloat(alertForm.lng),
+        radiusKm: parseFloat(alertForm.radiusKm) || 5.0,
       });
       setAlerts((prev) => [res.data.alert, ...prev]);
       setFocusCoords([res.data.alert.lat, res.data.alert.lng]);
@@ -180,6 +183,19 @@ export default function AdminDashboard() {
       alert(err.response?.data?.error || 'Failed to broadcast alert');
     } finally {
       setBroadcastLoading(false);
+    }
+  };
+
+  // 1-tap Deactivate Alert (PATCH /alerts/:id/deactivate)
+  const handleDeactivateAlert = async (alertId) => {
+    try {
+      const res = await api.patch(`/alerts/${alertId}/deactivate`);
+      setAlerts((prev) =>
+        prev.map((a) => (a.id === alertId ? { ...a, active: false } : a))
+      );
+    } catch (err) {
+      console.error('Failed to deactivate alert', err);
+      alert(err.response?.data?.error || 'Failed to deactivate alert');
     }
   };
 
@@ -312,6 +328,28 @@ export default function AdminDashboard() {
                 <Kanban className="w-3.5 h-3.5" />
                 <span>TRIAGE KANBAN</span>
               </button>
+              <button
+                type="button"
+                id="admin-view-shelters-btn"
+                onClick={() => setViewMode('SHELTERS')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
+                  viewMode === 'SHELTERS' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
+                }`}
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>SHELTER ROLLUP</span>
+              </button>
+              <button
+                type="button"
+                id="admin-view-broadcasts-btn"
+                onClick={() => setViewMode('BROADCASTS')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
+                  viewMode === 'BROADCASTS' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
+                }`}
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>BROADCASTS ({activeAlertsCount})</span>
+              </button>
             </div>
 
             <button
@@ -356,7 +394,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Dynamic Body: Map View or Kanban View */}
+        {/* Dynamic Body: Map View, Kanban, Shelters, or Broadcasts */}
         {viewMode === 'KANBAN' ? (
           <TriageKanban
             sosList={sosList}
@@ -369,166 +407,440 @@ export default function AdminDashboard() {
               setViewMode('MAP');
             }}
           />
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">
-            {/* Map (65% width) */}
-            <div className="lg:col-span-8 flex flex-col min-h-[500px]">
-              <div className="flex items-center justify-between mb-1 text-xs font-mono text-[#14231F]/70">
-                <span>REGIONAL SITUATIONAL OVERVIEW MAP</span>
-                <span>HAZARD RADII, SOS DISTRESS, VERIFIED HAZARD PINS & SHELTERS</span>
-              </div>
-              <MapView
-                alerts={alerts}
-                sosRequests={sosList}
-                shelters={shelters}
-                hazardReports={hazardReports}
-                focusCoords={focusCoords}
-                onConfirmHazard={handleConfirmHazard}
-                onViewSupplies={(s) => setViewingSuppliesShelter(s)}
-                userRole="ADMIN"
-              />
-            </div>
-
-            {/* Admin Tools Side Panel (35% width) */}
-            <div className="lg:col-span-4 flex flex-col gap-4">
-              {/* AI/IoT Risk Engine Simulator Card */}
-              <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3">
-                <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
-                  <div className="flex items-center gap-2">
-                    <CloudRain className="w-4 h-4 text-[#2E6E4E]" />
-                    <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
-                      AI / IoT Risk Simulator
-                    </h3>
-                  </div>
-                  <span className="text-[10px] font-mono bg-[#EFECE4] px-1.5 py-0.5 rounded text-[#14231F]/80">
-                    DEMO TOOL
+        ) : viewMode === 'SHELTERS' ? (
+          <div className="space-y-4 flex-1">
+            <AdminShelterRollup
+              shelters={shelters}
+              onSelectShelterCoords={(coords) => {
+                setFocusCoords(coords);
+                setViewMode('MAP');
+              }}
+            />
+          </div>
+        ) : viewMode === 'BROADCASTS' ? (
+          <div className="space-y-4 flex-1">
+            {/* Full View: Active Disaster Broadcasts Management Table */}
+            <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#D8D3C7]">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-[#B23A2E]" />
+                  <h3 className="font-display font-bold text-sm text-[#14231F] uppercase tracking-wide">
+                    Active Disaster Broadcasts Management Table
+                  </h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 bg-[#B23A2E] text-white rounded font-bold">
+                    {activeAlertsCount} ACTIVE
                   </span>
                 </div>
-
-                <p className="text-[11px] text-[#14231F]/70 font-mono">
-                  Simulates real-time telemetry from weather station & IoT sensor feeds. Drives the risk engine to auto-trigger alerts.
-                </p>
-
-                <div>
-                  <label className="block text-[11px] font-mono text-[#14231F]/80 mb-1">
-                    Target Telemetry Region:
-                  </label>
-                  <select
-                    value={simRegion}
-                    onChange={(e) => setSimRegion(e.target.value)}
-                    className="w-full p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs font-mono"
-                  >
-                    <option value="Kurla East">Kurla East (Torrential Flood Scenario: 75mm/h)</option>
-                    <option value="Mumbai">Mumbai Regional (Heavy Rain Advisory: 42mm/h)</option>
-                    <option value="Bandra">Bandra West (Moderate Baseline: 18mm/h)</option>
-                    <option value="Chennai">Chennai Sector (Severe Wildfire & Heat: 43°C, Smoke Spike)</option>
-                    <option value="Kutch">Kutch / Gujarat Rift (Seismic Sensor: 6.2M Earthquake)</option>
-                  </select>
-                </div>
-
                 <button
                   type="button"
-                  id="trigger-simulation-btn"
-                  disabled={simLoading}
-                  onClick={handleRunSimulation}
-                  className="w-full flex items-center justify-center gap-2 py-2 bg-[#14231F] hover:bg-black text-[#F6F4EF] font-display font-bold text-xs rounded transition-colors disabled:opacity-50"
+                  onClick={() => setBroadcastOpen(true)}
+                  className="px-3 py-1.5 bg-[#B23A2E] hover:bg-[#992c21] text-white font-bold text-xs rounded transition-colors font-mono"
                 >
-                  {simLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <>
-                      <Activity className="w-3.5 h-3.5 text-[#2E6E4E]" />
-                      <span>TRIGGER SENSOR RISK EVALUATION</span>
-                    </>
-                  )}
+                  + NEW BROADCAST
                 </button>
-
-                {simResult && (
-                  <div className="p-2.5 bg-[#EFECE4] border border-[#D8D3C7] rounded text-xs space-y-1 font-mono">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-[#14231F]">
-                        Risk Score: {simResult.assessment?.score}/100
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${
-                          simResult.assessment?.severity === 'CRITICAL'
-                            ? 'bg-[#B23A2E]'
-                            : 'bg-[#C97A2B]'
-                        }`}
-                      >
-                        {simResult.assessment?.severity} // {simResult.assessment?.hazardType}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#14231F]/80">{simResult.assessment?.reason}</p>
-                    {simResult.alert && (
-                      <div className="text-[10px] text-[#2E6E4E] font-bold pt-1 border-t border-[#D8D3C7]">
-                        ✓ Broadcasted alert #{simResult.alert.id} to emergency network!
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
-              {/* Shelter Capacity Quick Management */}
-              <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 flex-1 overflow-hidden flex flex-col">
-                <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
-                  <div className="flex items-center gap-2">
-                    <Home className="w-4 h-4 text-[#14231F]" />
-                    <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
-                      Shelter Occupancy Ops
-                    </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono border-collapse">
+                  <thead>
+                    <tr className="bg-[#FAF8F5] border-b border-[#D8D3C7] text-[#14231F]/70 text-[11px] uppercase">
+                      <th className="p-2.5">ID / Severity</th>
+                      <th className="p-2.5">Hazard Type</th>
+                      <th className="p-2.5">Target Region & Radius</th>
+                      <th className="p-2.5">Center Coordinates</th>
+                      <th className="p-2.5">Advisory Message</th>
+                      <th className="p-2.5">Created At</th>
+                      <th className="p-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#D8D3C7]">
+                    {alerts.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-[#14231F]/50">
+                          No disaster alerts registered in system.
+                        </td>
+                      </tr>
+                    ) : (
+                      alerts.map((alert) => {
+                        const isActive = alert.active;
+                        const isCritical = alert.severity === 'CRITICAL';
+                        return (
+                          <tr
+                            key={alert.id}
+                            className={`hover:bg-[#FAF8F5]/80 transition-colors ${
+                              !isActive ? 'opacity-50 bg-[#F6F4EF]/40' : ''
+                            }`}
+                          >
+                            <td className="p-2.5">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    isCritical
+                                      ? 'bg-[#B23A2E] text-white'
+                                      : 'bg-[#C97A2B] text-white'
+                                  }`}
+                                >
+                                  {alert.severity}
+                                </span>
+                                <span className="text-[#14231F]/60 text-[10px]">#{alert.id}</span>
+                              </div>
+                            </td>
+                            <td className="p-2.5 font-bold text-[#14231F]">
+                              {alert.hazardType}
+                            </td>
+                            <td className="p-2.5">
+                              <div className="font-semibold text-[#14231F]">{alert.region}</div>
+                              <div className="text-[11px] text-[#14231F]/70">
+                                Radius: <span className="font-bold text-[#14231F]">{alert.radiusKm || 5.0} km</span>
+                              </div>
+                            </td>
+                            <td className="p-2.5 text-[#14231F]/80">
+                              {typeof alert.lat === 'number' ? alert.lat.toFixed(4) : alert.lat},{' '}
+                              {typeof alert.lng === 'number' ? alert.lng.toFixed(4) : alert.lng}
+                            </td>
+                            <td className="p-2.5 max-w-sm truncate text-[#14231F]/80" title={alert.message}>
+                              {alert.message}
+                            </td>
+                            <td className="p-2.5 text-[#14231F]/60 text-[11px]">
+                              {new Date(alert.createdAt).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFocusCoords([alert.lat, alert.lng]);
+                                    setViewMode('MAP');
+                                  }}
+                                  className="px-2 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded text-[11px] text-[#14231F] font-semibold transition-colors"
+                                  title="Focus Incident Map"
+                                >
+                                  Map
+                                </button>
+                                {isActive ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeactivateAlert(alert.id)}
+                                    className="px-2.5 py-1 bg-[#B23A2E] hover:bg-[#972E24] text-white font-bold rounded text-[11px] transition-colors shadow-xs"
+                                    title="Deactivate broadcast and stand down warnings"
+                                  >
+                                    Deactivate
+                                  </button>
+                                ) : (
+                                  <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
+                                    STANDBY
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 flex-1">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* Map (65% width) */}
+              <div className="lg:col-span-8 flex flex-col min-h-[500px]">
+                <div className="flex items-center justify-between mb-1 text-xs font-mono text-[#14231F]/70">
+                  <span>REGIONAL SITUATIONAL OVERVIEW MAP</span>
+                  <span>HAZARD RADII, SOS DISTRESS, VERIFIED HAZARD PINS & SHELTERS</span>
+                </div>
+                <MapView
+                  alerts={alerts}
+                  sosRequests={sosList}
+                  shelters={shelters}
+                  hazardReports={hazardReports}
+                  focusCoords={focusCoords}
+                  onConfirmHazard={handleConfirmHazard}
+                  onViewSupplies={(s) => setViewingSuppliesShelter(s)}
+                  userRole="ADMIN"
+                />
+              </div>
+
+              {/* Admin Tools Side Panel (35% width) */}
+              <div className="lg:col-span-4 flex flex-col gap-4">
+                {/* AI/IoT Risk Engine Simulator Card */}
+                <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
+                    <div className="flex items-center gap-2">
+                      <CloudRain className="w-4 h-4 text-[#2E6E4E]" />
+                      <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
+                        AI / IoT Risk Simulator
+                      </h3>
+                    </div>
+                    <span className="text-[10px] font-mono bg-[#EFECE4] px-1.5 py-0.5 rounded text-[#14231F]/80">
+                      DEMO TOOL
+                    </span>
                   </div>
-                  <span className="text-[10px] font-mono text-[#14231F]/60">LIVE SYNC</span>
+
+                  <p className="text-[11px] text-[#14231F]/70 font-mono">
+                    Simulates real-time telemetry from weather station & IoT sensor feeds. Drives the risk engine to auto-trigger alerts.
+                  </p>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#14231F]/80 mb-1">
+                      Target Telemetry Region:
+                    </label>
+                    <select
+                      value={simRegion}
+                      onChange={(e) => setSimRegion(e.target.value)}
+                      className="w-full p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs font-mono"
+                    >
+                      <option value="Kurla East">Kurla East (Torrential Flood Scenario: 75mm/h)</option>
+                      <option value="Mumbai">Mumbai Regional (Heavy Rain Advisory: 42mm/h)</option>
+                      <option value="Bandra">Bandra West (Moderate Baseline: 18mm/h)</option>
+                      <option value="Chennai">Chennai Sector (Severe Wildfire & Heat: 43°C, Smoke Spike)</option>
+                      <option value="Kutch">Kutch / Gujarat Rift (Seismic Sensor: 6.2M Earthquake)</option>
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    id="trigger-simulation-btn"
+                    disabled={simLoading}
+                    onClick={handleRunSimulation}
+                    className="w-full flex items-center justify-center gap-2 py-2 bg-[#14231F] hover:bg-black text-[#F6F4EF] font-display font-bold text-xs rounded transition-colors disabled:opacity-50"
+                  >
+                    {simLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        <Activity className="w-3.5 h-3.5 text-[#2E6E4E]" />
+                        <span>TRIGGER SENSOR RISK EVALUATION</span>
+                      </>
+                    )}
+                  </button>
+
+                  {simResult && (
+                    <div className="p-2.5 bg-[#EFECE4] border border-[#D8D3C7] rounded text-xs space-y-1 font-mono">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-[#14231F]">
+                          Risk Score: {simResult.assessment?.score}/100
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${
+                            simResult.assessment?.severity === 'CRITICAL'
+                              ? 'bg-[#B23A2E]'
+                              : 'bg-[#C97A2B]'
+                          }`}
+                        >
+                          {simResult.assessment?.severity} // {simResult.assessment?.hazardType}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#14231F]/80">{simResult.assessment?.reason}</p>
+                      {simResult.alert && (
+                        <div className="text-[10px] text-[#2E6E4E] font-bold pt-1 border-t border-[#D8D3C7]">
+                          ✓ Broadcasted alert #{simResult.alert.id} to emergency network!
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <div className="divide-y divide-[#D8D3C7] overflow-y-auto flex-1 max-h-[220px]">
-                  {shelters.slice(0, 5).map((s) => (
-                    <div key={s.id} className="py-2 flex items-center justify-between gap-2 text-xs">
-                      <div className="truncate flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`px-1 py-0.2 rounded font-mono text-[9px] font-bold ${
-                            s.status === 'RED' ? 'bg-[#B23A2E] text-white' : s.status === 'YELLOW' ? 'bg-[#C97A2B] text-white' : 'bg-[#2E6E4E] text-white'
-                          }`}>
-                            {s.status}
-                          </span>
-                          <span className="font-bold text-[#14231F] truncate">{s.name}</span>
-                        </div>
-                        <div className="font-mono text-[11px] text-[#14231F]/70 mt-0.5">
-                          {s.currentOccupancy} / {s.capacity} beds
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 font-mono">
-                        <button
-                          type="button"
-                          onClick={() => setViewingSuppliesShelter(s)}
-                          className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7] text-[10px] font-bold text-[#2E6E4E]"
-                          title="Relief supplies & shipments"
-                        >
-                          📦 SUPPLIES
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAdjustOccupancy(s.id, -10)}
-                          className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7]"
-                          title="Release 10 beds"
-                        >
-                          -10
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAdjustOccupancy(s.id, 10)}
-                          className="px-2 py-0.5 bg-[#14231F] text-white hover:bg-black rounded"
-                          title="Admit 10 people"
-                        >
-                          +10
-                        </button>
-                      </div>
+                {/* Shelter Capacity Quick Rollup Summary Card (Replacing per-item editing) */}
+                <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 flex-1 overflow-hidden flex flex-col">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
+                    <div className="flex items-center gap-2">
+                      <Home className="w-4 h-4 text-[#14231F]" />
+                      <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
+                        Shelter Capacity Rollup
+                      </h3>
                     </div>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('SHELTERS')}
+                      className="text-[10px] font-mono text-[#14231F] font-bold hover:underline"
+                    >
+                      FULL MATRIX →
+                    </button>
+                  </div>
+
+                  <div className="divide-y divide-[#D8D3C7] overflow-y-auto flex-1 max-h-[220px]">
+                    {shelters.map((s) => {
+                      const free = Math.max(0, s.capacity - s.currentOccupancy);
+                      const pct = s.capacity > 0 ? Math.min(100, Math.round((s.currentOccupancy / s.capacity) * 100)) : 0;
+                      return (
+                        <div key={s.id} className="py-2 flex items-center justify-between gap-2 text-xs">
+                          <div className="truncate flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-bold ${
+                                  s.status === 'RED'
+                                    ? 'bg-[#B23A2E] text-white'
+                                    : s.status === 'YELLOW'
+                                    ? 'bg-[#C97A2B] text-white'
+                                    : 'bg-[#EFECE4] text-[#14231F] border border-[#D8D3C7]'
+                                }`}
+                              >
+                                {s.status}
+                              </span>
+                              <span className="font-bold text-[#14231F] truncate">{s.name}</span>
+                            </div>
+                            <div className="font-mono text-[11px] text-[#14231F]/70 mt-0.5 flex items-center gap-2">
+                              <span>{s.currentOccupancy}/{s.capacity} beds ({pct}%)</span>
+                              <span className="text-[#14231F]/50">• {free} free</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 font-mono">
+                            <button
+                              type="button"
+                              onClick={() => setViewingSuppliesShelter(s)}
+                              className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7] text-[10px] font-bold text-[#14231F]"
+                              title="Relief supplies & shipments"
+                            >
+                              📦 SUPPLIES
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFocusCoords([s.lat, s.lng])}
+                              className="px-2 py-0.5 bg-[#14231F] text-white hover:bg-black rounded text-[10px]"
+                              title="Locate on map"
+                            >
+                              LOCATE
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
+
+            {/* Active Disaster Broadcasts Management Table (Accessible directly on main page) */}
+            <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#D8D3C7]">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-[#B23A2E]" />
+                  <h3 className="font-display font-bold text-sm text-[#14231F] uppercase tracking-wide">
+                    Active Disaster Broadcasts Management Table
+                  </h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 bg-[#B23A2E] text-white rounded font-bold">
+                    {activeAlertsCount} ACTIVE
+                  </span>
+                </div>
+                <span className="text-xs font-mono text-[#14231F]/60">
+                  Real-time broadcast siren, SMS & Web Push dispatch
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono border-collapse">
+                  <thead>
+                    <tr className="bg-[#FAF8F5] border-b border-[#D8D3C7] text-[#14231F]/70 text-[11px] uppercase">
+                      <th className="p-2.5">ID / Severity</th>
+                      <th className="p-2.5">Hazard Type</th>
+                      <th className="p-2.5">Target Region & Radius</th>
+                      <th className="p-2.5">Center Coordinates</th>
+                      <th className="p-2.5">Advisory Message</th>
+                      <th className="p-2.5">Created At</th>
+                      <th className="p-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#D8D3C7]">
+                    {alerts.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-6 text-center text-[#14231F]/50">
+                          No disaster alerts registered in system.
+                        </td>
+                      </tr>
+                    ) : (
+                      alerts.map((alert) => {
+                        const isActive = alert.active;
+                        const isCritical = alert.severity === 'CRITICAL';
+                        return (
+                          <tr
+                            key={alert.id}
+                            className={`hover:bg-[#FAF8F5]/80 transition-colors ${
+                              !isActive ? 'opacity-50 bg-[#F6F4EF]/40' : ''
+                            }`}
+                          >
+                            <td className="p-2.5">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    isCritical
+                                      ? 'bg-[#B23A2E] text-white'
+                                      : 'bg-[#C97A2B] text-white'
+                                  }`}
+                                >
+                                  {alert.severity}
+                                </span>
+                                <span className="text-[#14231F]/60 text-[10px]">#{alert.id}</span>
+                              </div>
+                            </td>
+                            <td className="p-2.5 font-bold text-[#14231F]">
+                              {alert.hazardType}
+                            </td>
+                            <td className="p-2.5">
+                              <div className="font-semibold text-[#14231F]">{alert.region}</div>
+                              <div className="text-[11px] text-[#14231F]/70">
+                                Radius: <span className="font-bold text-[#14231F]">{alert.radiusKm || 5.0} km</span>
+                              </div>
+                            </td>
+                            <td className="p-2.5 text-[#14231F]/80">
+                              {typeof alert.lat === 'number' ? alert.lat.toFixed(4) : alert.lat},{' '}
+                              {typeof alert.lng === 'number' ? alert.lng.toFixed(4) : alert.lng}
+                            </td>
+                            <td className="p-2.5 max-w-sm truncate text-[#14231F]/80" title={alert.message}>
+                              {alert.message}
+                            </td>
+                            <td className="p-2.5 text-[#14231F]/60 text-[11px]">
+                              {new Date(alert.createdAt).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFocusCoords([alert.lat, alert.lng]);
+                                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                                  }}
+                                  className="px-2 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded text-[11px] text-[#14231F] font-semibold transition-colors"
+                                  title="Focus Incident Map"
+                                >
+                                  Map
+                                </button>
+                                {isActive ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeactivateAlert(alert.id)}
+                                    className="px-2.5 py-1 bg-[#B23A2E] hover:bg-[#972E24] text-white font-bold rounded text-[11px] transition-colors shadow-xs"
+                                    title="Deactivate broadcast and stand down warnings"
+                                  >
+                                    Deactivate
+                                  </button>
+                                ) : (
+                                  <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
+                                    STANDBY
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Aggregate Shelter Rollup Matrix */}
+            <AdminShelterRollup
+              shelters={shelters}
+              onSelectShelterCoords={(coords) => {
+                setFocusCoords(coords);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
           </div>
         )}
       </div>
@@ -659,6 +971,49 @@ export default function AdminDashboard() {
                     onChange={(e) => setAlertForm({ ...alertForm, lng: e.target.value })}
                     className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                   />
+                </div>
+              </div>
+
+              {/* Radius Selector (Issue 3 / Spec) */}
+              <div className="p-3 bg-[#FAF8F5] border border-[#D8D3C7] rounded space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-mono uppercase text-[#14231F] font-bold">
+                    Emergency Coverage Radius
+                  </label>
+                  <span className="text-xs font-mono font-bold text-[#B23A2E]">
+                    {alertForm.radiusKm} km radius
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[2, 5, 10, 25, 50].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setAlertForm({ ...alertForm, radiusKm: preset })}
+                      className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
+                        Number(alertForm.radiusKm) === preset
+                          ? 'bg-[#14231F] text-white border-[#14231F] font-bold shadow-xs'
+                          : 'bg-white text-[#14231F] border-[#D8D3C7] hover:bg-[#EFECE4]'
+                      }`}
+                    >
+                      {preset} km
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs font-mono text-[#14231F]/70">Custom radius:</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    max="500"
+                    value={alertForm.radiusKm}
+                    onChange={(e) => setAlertForm({ ...alertForm, radiusKm: e.target.value })}
+                    className="w-24 p-1.5 bg-white border border-[#D8D3C7] rounded text-xs font-mono focus:outline-none focus:border-[#14231F]"
+                  />
+                  <span className="text-xs font-mono text-[#14231F]/70">km (kilometers)</span>
                 </div>
               </div>
 

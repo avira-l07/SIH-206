@@ -16,96 +16,113 @@ async function main() {
   await prisma.offlineSyncLog.deleteMany();
   await prisma.sOSRequest.deleteMany();
   await prisma.alert.deleteMany();
-  await prisma.shelter.deleteMany();
-  await prisma.user.deleteMany();
+  // Note: DO NOT delete prisma.user! That destroys real citizen and volunteer accounts on every rebuild/restart.
+  // Instead, demo accounts are idempotently upserted below.
 
   const salt = await bcrypt.genSalt(10);
   const defaultPasswordHash = await bcrypt.hash('password123', salt);
 
-  // 1. Seed Demo Users
-  const citizen = await prisma.user.create({
-    data: {
+  // 1. Seed Demo Users (idempotent upsert by email)
+  const demoUsers = [
+    {
       name: 'Rohan Sharma',
       email: 'citizen@sih.gov.in',
-      passwordHash: defaultPasswordHash,
       role: 'CITIZEN',
       phone: '+91 98201 12345',
+      region: 'Kurla East',
       lat: 19.0760,
       lng: 72.8777,
       trusted: false,
     },
-  });
-
-  const volunteer = await prisma.user.create({
-    data: {
+    {
       name: 'Priya Patel (NDRF Vol.)',
       email: 'volunteer@sih.gov.in',
-      passwordHash: defaultPasswordHash,
       role: 'VOLUNTEER',
       phone: '+91 98202 54321',
+      region: 'Bandra West',
       lat: 19.0596,
       lng: 72.8295,
       trusted: false,
     },
-  });
-
-  const admin = await prisma.user.create({
-    data: {
+    {
       name: 'NDMA Emergency Operations Center',
       email: 'admin@sih.gov.in',
-      passwordHash: defaultPasswordHash,
       role: 'ADMIN',
       phone: '+91 22 2202 7990',
+      region: 'Dadar Central',
       lat: 19.0178,
       lng: 72.8478,
       trusted: true,
     },
-  });
-
-  // Trusted Authority User (for instant RED verification demo)
-  const trustedOfficer = await prisma.user.create({
-    data: {
+    {
       name: 'Insp. Vikram Rathore (MCGM Chief)',
       email: 'trusted_officer@sih.gov.in',
-      passwordHash: defaultPasswordHash,
       role: 'ADMIN',
       phone: '+91 22 2269 1100',
+      region: 'Kurla East',
       lat: 19.0726,
       lng: 72.8845,
       trusted: true,
     },
-  });
-
-  // Seeded Nearby Confirmer accounts (for live Grey -> Amber -> Red peer verification demo)
-  const confirmer1 = await prisma.user.create({
-    data: {
+    {
       name: 'Neha Kulkarni (Local Citizen)',
       email: 'confirmer1@sih.gov.in',
-      passwordHash: defaultPasswordHash,
       role: 'CITIZEN',
       phone: '+91 98111 22334',
+      region: 'Kurla East',
       lat: 19.0735,
       lng: 72.8840,
       trusted: false,
     },
-  });
-
-  const confirmer2 = await prisma.user.create({
-    data: {
+    {
       name: 'Sanjay Verma (Ward Volunteer)',
       email: 'confirmer2@sih.gov.in',
-      passwordHash: defaultPasswordHash,
       role: 'CITIZEN',
       phone: '+91 98222 33445',
+      region: 'Kurla East',
       lat: 19.0740,
       lng: 72.8855,
       trusted: false,
     },
-  });
+  ];
 
-  console.log('✅ Seeded users: citizen, volunteer, admin, trusted_officer, confirmer1, confirmer2');
+  for (const u of demoUsers) {
+    await prisma.user.upsert({
+      where: { email: u.email },
+      update: {
+        name: u.name,
+        passwordHash: defaultPasswordHash,
+        role: u.role,
+        phone: u.phone,
+        region: u.region,
+        lat: u.lat,
+        lng: u.lng,
+        trusted: u.trusted,
+      },
+      create: {
+        name: u.name,
+        email: u.email,
+        passwordHash: defaultPasswordHash,
+        role: u.role,
+        phone: u.phone,
+        region: u.region,
+        lat: u.lat,
+        lng: u.lng,
+        trusted: u.trusted,
+      },
+    });
+  }
 
-  // 2. Seed Shelters with Full Audit Status (Green, Yellow, Red)
+  console.log('✅ Idempotently upserted demo accounts (citizen, volunteer, admin, etc.) without touching other accounts');
+
+  const citizen = await prisma.user.findUnique({ where: { email: 'citizen@sih.gov.in' } });
+  const volunteer = await prisma.user.findUnique({ where: { email: 'volunteer@sih.gov.in' } });
+  const admin = await prisma.user.findUnique({ where: { email: 'admin@sih.gov.in' } });
+  const trustedOfficer = await prisma.user.findUnique({ where: { email: 'trusted_officer@sih.gov.in' } });
+  const confirmer1 = await prisma.user.findUnique({ where: { email: 'confirmer1@sih.gov.in' } });
+  const confirmer2 = await prisma.user.findUnique({ where: { email: 'confirmer2@sih.gov.in' } });
+
+  // 2. Seed Shelters with Full Audit Status (Green, Yellow, Red) & Supply Categories
   const shelters = [
     {
       id: 101,
@@ -119,6 +136,10 @@ async function main() {
       waterThreshold: 200,
       rationsUnitsRemaining: 250,
       rationsThreshold: 50,
+      medicalKitsRemaining: 35,
+      medicalThreshold: 10,
+      blanketsRemaining: 180,
+      blanketsThreshold: 30,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -138,6 +159,10 @@ async function main() {
       waterThreshold: 200,
       rationsUnitsRemaining: 400,
       rationsThreshold: 50,
+      medicalKitsRemaining: 50,
+      medicalThreshold: 15,
+      blanketsRemaining: 220,
+      blanketsThreshold: 40,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -157,6 +182,10 @@ async function main() {
       waterThreshold: 200,
       rationsUnitsRemaining: 300,
       rationsThreshold: 50,
+      medicalKitsRemaining: 40,
+      medicalThreshold: 10,
+      blanketsRemaining: 150,
+      blanketsThreshold: 30,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -176,6 +205,10 @@ async function main() {
       waterThreshold: 200,
       rationsUnitsRemaining: 120,
       rationsThreshold: 50,
+      medicalKitsRemaining: 12, // Low medical supplies
+      medicalThreshold: 10,
+      blanketsRemaining: 60,
+      blanketsThreshold: 30,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -195,6 +228,10 @@ async function main() {
       waterThreshold: 200,
       rationsUnitsRemaining: 30, // Critical threshold breach (30 units < 50 units)
       rationsThreshold: 50,
+      medicalKitsRemaining: 4, // Critical medical shortage (4 < 10)
+      medicalThreshold: 10,
+      blanketsRemaining: 18, // Critical blankets shortage (18 < 30)
+      blanketsThreshold: 30,
       waterOk: false, // Critical resource depleted
       rationsOk: true,
       restroomsOk: false,
@@ -214,6 +251,10 @@ async function main() {
       waterThreshold: 200,
       rationsUnitsRemaining: 150,
       rationsThreshold: 50,
+      medicalKitsRemaining: 25,
+      medicalThreshold: 10,
+      blanketsRemaining: 100,
+      blanketsThreshold: 25,
       waterOk: true,
       rationsOk: true,
       restroomsOk: true,
@@ -221,10 +262,60 @@ async function main() {
       status: 'GREEN',
       contact: '+91 22 2218 5566',
     },
+    {
+      id: 107,
+      name: 'Delhi NCR Central Relief Hub',
+      address: 'Connaught Place / Barakhamba Rd, New Delhi',
+      lat: 28.6304,
+      lng: 77.2177,
+      capacity: 800,
+      currentOccupancy: 150,
+      waterLitersRemaining: 2500,
+      waterThreshold: 300,
+      rationsUnitsRemaining: 600,
+      rationsThreshold: 80,
+      medicalKitsRemaining: 65,
+      medicalThreshold: 20,
+      blanketsRemaining: 400,
+      blanketsThreshold: 50,
+      waterOk: true,
+      rationsOk: true,
+      restroomsOk: true,
+      powerOk: true,
+      status: 'GREEN',
+      contact: '+91 11 2345 6789',
+    },
+    {
+      id: 108,
+      name: 'Chennai Guindy Disaster Safe Shelter',
+      address: 'Anna Salai, Guindy, Chennai',
+      lat: 13.0067,
+      lng: 80.2025,
+      capacity: 450,
+      currentOccupancy: 110,
+      waterLitersRemaining: 1400,
+      waterThreshold: 200,
+      rationsUnitsRemaining: 350,
+      rationsThreshold: 50,
+      medicalKitsRemaining: 30,
+      medicalThreshold: 10,
+      blanketsRemaining: 180,
+      blanketsThreshold: 30,
+      waterOk: true,
+      rationsOk: true,
+      restroomsOk: true,
+      powerOk: true,
+      status: 'GREEN',
+      contact: '+91 44 2235 1234',
+    },
   ];
 
   for (const shelter of shelters) {
-    await prisma.shelter.create({ data: shelter });
+    await prisma.shelter.upsert({
+      where: { id: shelter.id },
+      update: shelter,
+      create: shelter,
+    });
   }
   console.log(`✅ Seeded ${shelters.length} emergency shelters across GREEN, YELLOW, and RED readiness states`);
 
@@ -236,6 +327,7 @@ async function main() {
       region: 'Kurla - Mithi River Catchment',
       lat: 19.0726,
       lng: 72.8845,
+      radiusKm: 5.0,
       message: 'Water levels exceeded safety threshold (145mm rainfall in 3h). Evacuate ground floor areas immediately.',
       active: true,
     },
@@ -248,11 +340,25 @@ async function main() {
       region: 'Deonar Sector 4',
       lat: 19.0550,
       lng: 72.9150,
+      radiusKm: 3.0,
       message: 'Industrial area smoke report. Fire tenders on site, avoid perimeter road.',
       active: true,
     },
   });
-  console.log('✅ Seeded 2 disaster alerts');
+
+  await prisma.alert.create({
+    data: {
+      hazardType: 'CYCLONE',
+      severity: 'CRITICAL',
+      region: 'Chennai Coastal Zone',
+      lat: 13.0827,
+      lng: 80.2707,
+      radiusKm: 25.0,
+      message: 'Severe coastal storm surge warning. Low-lying coastal residents must evacuate to designated relief shelters.',
+      active: true,
+    },
+  });
+  console.log('✅ Seeded 3 disaster alerts (including multi-region)');
 
   // 4. Seed Vulnerability-Tagged SOS Requests
   // Urgent: Dialysis + Elderly + Critical Battery + Proxy

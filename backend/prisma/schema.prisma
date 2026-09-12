@@ -14,6 +14,7 @@ model User {
   passwordHash  String
   role          String               @default("CITIZEN") // CITIZEN, VOLUNTEER, ADMIN
   phone         String?
+  region        String?
   lat           Float?
   lng           Float?
   trusted       Boolean              @default(false)
@@ -33,6 +34,7 @@ model Alert {
   region     String
   lat        Float
   lng        Float
+  radiusKm   Float    @default(5.0)
   message    String
   active     Boolean  @default(true)
   createdAt  DateTime @default(now())
@@ -76,6 +78,10 @@ model Shelter {
   waterThreshold        Int              @default(200)
   rationsUnitsRemaining Int?
   rationsThreshold      Int              @default(50)
+  medicalKitsRemaining  Int?             @default(25)
+  medicalThreshold      Int              @default(10)
+  blanketsRemaining     Int?             @default(120)
+  blanketsThreshold     Int              @default(30)
   waterOk               Boolean          @default(true)
   rationsOk             Boolean          @default(true)
   restroomsOk           Boolean          @default(true)
@@ -97,6 +103,8 @@ model ShelterEvent {
   deltaOccupancy   Int      @default(0) // e.g. +20 (admitted evacuees), -5 (discharged)
   deltaWaterLiters Int      @default(0) // e.g. -100 (consumed), +500 (tanker delivery)
   deltaRations     Int      @default(0) // e.g. -30 (distributed), +200 (crates received)
+  deltaMedicalKits Int      @default(0) // e.g. +10 (medical boxes restocked), -5 (used)
+  deltaBlankets    Int      @default(0) // e.g. +50 (blankets supplied), -20 (distributed)
   reason           String?  // e.g. "Bus arrival from Sector 4", "Tanker restock"
   operatorName     String   @default("Field Operator")
   idempotencyKey   String?  @unique

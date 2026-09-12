@@ -40,31 +40,50 @@ function isRegionMatch(subscriberRegion, alertRegion) {
   return false;
 }
 
+function calculateHaversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 /**
  * Asynchronous, non-blocking fan-out to public reach channels (SMS & Web Push)
- * Matches subscribers across BOTH PhoneRegistration and User tables,
- * normalizes phone numbers to E.164, and deduplicates.
+ * Matches subscribers across BOTH PhoneRegistration and User tables:
+ * - For citizens with lat/lng: Haversine distance matching against alert.radiusKm
+ * - For citizens without lat/lng: region-string containment matching fallback
+ * - For PhoneRegistration: region-string containment matching
+ * Normalizes phone numbers to E.164 and deduplicates.
  */
 async function fanOutPublicAlerts(alert, explicitPhones = []) {
   try {
     const alertRegion = alert.region ? alert.region.trim() : null;
+    const alertRadius = alert.radiusKm !== undefined && alert.radiusKm !== null ? Number(alert.radiusKm) : 5.0;
+    const hasAlertCoords = typeof alert.lat === 'number' && typeof alert.lng === 'number';
 
     // Concurrently fetch:
     // 1. Phone registrations from public no-login registry
-    // 2. Registered citizen users with phone numbers from User table
+    // 2. Registered citizen users with phone numbers from User table (including coordinates and region)
     // 3. Web Push browser subscriptions
     const [allPhoneRecords, allCitizenUsers, allPushSubs] = await Promise.all([
       prisma.phoneRegistration.findMany(),
       prisma.user.findMany({
         where: { role: 'CITIZEN', phone: { not: null } },
-        select: { id: true, name: true, phone: true },
+        select: { id: true, name: true, phone: true, region: true, lat: true, lng: true },
       }),
       prisma.pushSubscription.findMany(),
     ]);
 
-    // 1. Filter and normalize phone numbers from PhoneRegistration
     const recipientPhoneSet = new Set();
 
+    // 1. Filter and normalize phone numbers from PhoneRegistration (region-string matching)
     for (const record of allPhoneRecords) {
       if (isRegionMatch(record.region, alertRegion)) {
         const normalized = normalizePhoneNumber(record.phoneNumber);
@@ -72,10 +91,26 @@ async function fanOutPublicAlerts(alert, explicitPhones = []) {
       }
     }
 
-    // 2. Include registered citizens from User table
-    // (Citizens are part of the protected population; if their location or region applies, enroll them)
+    // 2. Filter registered citizens from User table:
+    // - For citizens with lat/lng: match via Haversine distance against alert.radiusKm
+    // - For citizens without lat/lng (declined permission/older account): fall back to region matching
     for (const citizen of allCitizenUsers) {
-      if (citizen.phone) {
+      let isMatch = false;
+      const hasCitizenCoords = typeof citizen.lat === 'number' && typeof citizen.lng === 'number';
+
+      if (hasAlertCoords && hasCitizenCoords) {
+        const distKm = calculateHaversineKm(alert.lat, alert.lng, citizen.lat, citizen.lng);
+        if (distKm <= alertRadius) {
+          isMatch = true;
+        }
+      } else {
+        // Fallback to region matching
+        if (isRegionMatch(citizen.region, alertRegion)) {
+          isMatch = true;
+        }
+      }
+
+      if (isMatch && citizen.phone) {
         const normalized = normalizePhoneNumber(citizen.phone);
         if (normalized) recipientPhoneSet.add(normalized);
       }
@@ -96,7 +131,7 @@ async function fanOutPublicAlerts(alert, explicitPhones = []) {
       isRegionMatch(sub.region, alertRegion)
     );
 
-    const smsMessage = `[SIH EMERGENCY ALERT] ${alert.severity}: ${alert.hazardType} in ${alert.region}. ${alert.message}. Seek safe shelter.`;
+    const smsMessage = `[SIH EMERGENCY ALERT] ${alert.severity}: ${alert.hazardType} in ${alert.region} (${alertRadius}km radius). ${alert.message}. Seek safe shelter.`;
 
     const pushPayload = {
       title: `EMERGENCY ALERT: ${alert.severity} ${alert.hazardType}`,
@@ -107,12 +142,13 @@ async function fanOutPublicAlerts(alert, explicitPhones = []) {
       region: alert.region,
       lat: alert.lat,
       lng: alert.lng,
+      radiusKm: alertRadius,
       url: '/',
       timestamp: Date.now(),
     };
 
     console.log(
-      `[Alert Fanout] Alert #${alert.id} (${alert.severity} in ${alert.region}) triggering public fan-out: ${uniquePhoneNumbers.length} SMS recipients (including registered citizens), ${matchingPushSubs.length} Web Push devices.`
+      `[Alert Fanout] Alert #${alert.id} (${alert.severity} in ${alert.region}, r=${alertRadius}km) triggering public fan-out: ${uniquePhoneNumbers.length} SMS recipients (including registered citizens), ${matchingPushSubs.length} Web Push devices.`
     );
 
     // Concurrently fan out without blocking HTTP caller
@@ -149,15 +185,18 @@ async function getAlerts(req, res) {
 
 async function createAlert(req, res) {
   try {
-    const { hazardType, severity, region, lat, lng, message, targetPhone, targetPhones } = req.body;
+    const { hazardType, severity, region, lat, lng, radiusKm, message, targetPhone, targetPhones } = req.body;
+
+    const parsedRadius = radiusKm !== undefined && radiusKm !== null ? parseFloat(radiusKm) : 5.0;
 
     const alert = await prisma.alert.create({
       data: {
         hazardType,
         severity,
         region,
-        lat,
-        lng,
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        radiusKm: isNaN(parsedRadius) ? 5.0 : parsedRadius,
         message,
         active: true,
       },
