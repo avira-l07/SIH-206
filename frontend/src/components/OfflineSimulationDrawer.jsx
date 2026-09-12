@@ -11,6 +11,7 @@ import {
   X,
   Database,
   UploadCloud,
+  MessageSquare,
 } from 'lucide-react';
 import api from '../services/api';
 import {
@@ -83,6 +84,35 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
       }
     }
   };
+
+  const handleDirectGatewayIngest = async () => {
+    if (!smsInput.trim()) return;
+    setIngesting(true);
+    setLastResult(null);
+    try {
+      const res = await api.post('/offline/sms-ingest', {
+        payload: smsInput.trim(),
+        sourceNode: 'Cellular Carrier Gateway (2G GSM)',
+      });
+      setLastResult({
+        status: 'SUCCESS',
+        message: 'Cellular Carrier Ingested: Telemetry parsed and synchronized to platform',
+        applied: res.data.result,
+      });
+      await loadLogs();
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      setLastResult({
+        status: 'ERROR',
+        message: err.response?.data?.error || 'Failed to process gateway SMS payload',
+      });
+    } finally {
+      setIngesting(false);
+    }
+  };
+
+  const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const deviceSmsUri = `sms:112${isIOS ? '&' : '?'}body=${encodeURIComponent(smsInput.trim())};`;
 
   const handleManualFlush = async () => {
     setFlushing(true);
@@ -311,12 +341,35 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                   type="submit"
                   id="submit-sms-packet-btn"
                   disabled={ingesting}
-                  className="px-3.5 py-2 bg-[#14231F] hover:bg-black text-white font-mono text-xs font-bold rounded flex items-center gap-1"
+                  className="px-3.5 py-2 bg-[#14231F] hover:bg-black text-white font-mono text-xs font-bold rounded flex items-center gap-1 shrink-0"
                 >
                   <Send className="w-3 h-3" />
-                  <span>INGEST</span>
+                  <span>{isOffline ? 'QUEUE OFFLINE' : 'INGEST'}</span>
                 </button>
               </form>
+
+              {/* Dual Offline Transmission Options */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <a
+                  href={deviceSmsUri}
+                  className="px-2.5 py-1.5 bg-[#B23A2E] hover:bg-[#972E24] text-white rounded text-[11px] font-mono font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                  title="Open in your phone's native Messages app to send via 2G cellular network (works without internet!)"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>📲 Send via Phone Messages App (2G SMS)</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={handleDirectGatewayIngest}
+                  disabled={ingesting}
+                  className="px-2.5 py-1.5 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F] border border-[#D8D3C7] rounded text-[11px] font-mono font-bold flex items-center gap-1.5 transition-colors"
+                  title="Simulate cellular tower receiving this SMS and feeding it into the platform"
+                >
+                  <Radio className="w-3.5 h-3.5 text-[#2E6E4E]" />
+                  <span>📡 Simulate Carrier Gateway Ingest</span>
+                </button>
+              </div>
 
               {/* Execution Feedback */}
               {lastResult && (

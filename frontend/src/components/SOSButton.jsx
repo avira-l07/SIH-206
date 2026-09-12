@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertOctagon, MapPin, Loader2, CheckCircle2, HeartHandshake, Battery, BatteryWarning, Users, WifiOff } from 'lucide-react';
+import { AlertOctagon, MapPin, Loader2, CheckCircle2, HeartHandshake, Battery, BatteryWarning, Users, WifiOff, MessageSquare, Radio } from 'lucide-react';
 import api from '../services/api';
 import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 
@@ -21,6 +21,7 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
   const [locating, setLocating] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [isQueuedOffline, setIsQueuedOffline] = useState(false);
+  const [offlineSmsPayload, setOfflineSmsPayload] = useState('');
   const [reportedByProxy, setReportedByProxy] = useState(false);
   const [subjectDescription, setSubjectDescription] = useState('');
 
@@ -106,6 +107,8 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
       isManualOffline() || (typeof navigator !== 'undefined' && !navigator.onLine);
 
     if (shouldQueueDirectly) {
+      const formattedSms = `SOS ${coords.lat.toFixed(4)} ${coords.lng.toFixed(4)} ${hazardType} ${vulnerabilityTags.join(',') || 'none'} ${message.trim() || 'Emergency distress call'}`;
+      setOfflineSmsPayload(formattedSms);
       try {
         await enqueueAction({
           type: 'SOS',
@@ -113,16 +116,7 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
           payload,
         });
         setIsQueuedOffline(true);
-        setSuccessMessage('Offline Outage: SOS Distress Signal Queued Locally');
-        setTimeout(() => {
-          setIsOpen(false);
-          setMessage('');
-          setVulnerabilityTags([]);
-          setReportedByProxy(false);
-          setSubjectDescription('');
-          setSuccessMessage('');
-          setIsQueuedOffline(false);
-        }, 2200);
+        setSuccessMessage('Offline Outage: SOS Signal Saved in Device Storage');
         return;
       } catch (qErr) {
         console.error('Failed to queue offline SOS:', qErr);
@@ -209,24 +203,70 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
             </div>
 
             {successMessage ? (
-              <div className="py-8 text-center space-y-3">
+              <div className="py-6 text-center space-y-4">
                 {isQueuedOffline ? (
-                  <WifiOff className="w-12 h-12 text-[#C97A2B] mx-auto animate-pulse" />
+                  <div className="w-12 h-12 bg-amber-500/20 text-amber-600 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                    <WifiOff className="w-6 h-6" />
+                  </div>
                 ) : (
                   <CheckCircle2 className="w-12 h-12 text-[#2E6E4E] mx-auto animate-bounce" />
                 )}
-                <p
-                  className={`font-display font-bold text-lg ${
-                    isQueuedOffline ? 'text-[#C97A2B]' : 'text-[#2E6E4E]'
-                  }`}
-                >
-                  {successMessage}
-                </p>
-                <p className="text-sm text-[#14231F]/70 font-mono">
-                  {isQueuedOffline
-                    ? 'Stored safely in local IndexedDB. Will auto-sync to local hub or cell network immediately when reconnected.'
-                    : 'Coordinates & vulnerability tags broadcast to rescue commanders.'}
-                </p>
+                <div>
+                  <p
+                    className={`font-display font-bold text-lg ${
+                      isQueuedOffline ? 'text-amber-900' : 'text-[#2E6E4E]'
+                    }`}
+                  >
+                    {successMessage}
+                  </p>
+                  <p className="text-xs text-[#14231F]/70 font-mono mt-1">
+                    {isQueuedOffline
+                      ? 'Saved to your browser offline queue. It will auto-sync to rescue units immediately when internet is restored.'
+                      : 'Coordinates & vulnerability tags broadcast to rescue commanders.'}
+                  </p>
+                </div>
+
+                {/* 2G Cellular Native SMS Fallback (Works 100% offline without mobile data or Wi-Fi) */}
+                {isQueuedOffline && (
+                  <div className="p-3.5 bg-[#14231F] text-[#F6F4EF] rounded-lg text-left space-y-2 border border-[#D8D3C7] shadow-md animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between text-xs font-mono">
+                      <span className="font-bold text-[#E5A93C] flex items-center gap-1.5">
+                        <Radio className="w-4 h-4" /> 2G CELLULAR SMS FALLBACK
+                      </span>
+                      <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded text-white/70">NO DATA NEEDED</span>
+                    </div>
+                    <p className="text-[11px] text-white/80 font-mono">
+                      Send this emergency beacon immediately via your phone's built-in SMS app over regular cellular lines (standard 2G SMS):
+                    </p>
+                    <div className="p-2 bg-black/40 rounded text-[11px] font-mono text-emerald-400 break-all select-all border border-white/10">
+                      {offlineSmsPayload}
+                    </div>
+                    <div className="pt-1 flex flex-col sm:flex-row gap-2">
+                      <a
+                        href={`sms:112${typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent) ? '&' : '?'}body=${encodeURIComponent(offlineSmsPayload)}`}
+                        className="flex-1 py-2.5 px-4 bg-[#B23A2E] hover:bg-[#972E24] text-white font-display font-bold text-xs rounded flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-md uppercase"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                        <span>Open in Messages App (Send to 112)</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsOpen(false);
+                          setMessage('');
+                          setVulnerabilityTags([]);
+                          setReportedByProxy(false);
+                          setSubjectDescription('');
+                          setSuccessMessage('');
+                          setIsQueuedOffline(false);
+                        }}
+                        className="py-2.5 px-4 bg-white/15 hover:bg-white/25 text-white font-mono text-xs rounded"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="mt-4 space-y-4">
