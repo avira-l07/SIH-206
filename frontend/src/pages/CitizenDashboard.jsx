@@ -208,9 +208,9 @@ export default function CitizenDashboard() {
         onSelectAlert={(alert) => setFocusCoords([alert.lat, alert.lng])}
       />
 
-      <div className="max-w-7xl w-full mx-auto p-3 sm:p-4 flex-1 flex flex-col gap-4">
+      <div className="max-w-7xl w-full mx-auto p-3 sm:p-4 pb-16 flex-1 flex flex-col gap-4">
         {/* Citizen Emergency Header & SOS Status */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FFFFFF] border border-[#D8D3C7] p-4 rounded">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#FFFFFF] border border-[#D8D3C7] p-4 rounded shadow-xs">
           <div>
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-[#2E6E4E]"></span>
@@ -218,26 +218,27 @@ export default function CitizenDashboard() {
                 CITIZEN RESILIENCE & SOS CONSOLE
               </h1>
             </div>
-            <p className="text-xs sm:text-sm text-[#14231F]/70 mt-0.5">
-              Welcome {user?.name || 'Citizen'}. Monitor live threats, verify ground hazards, or navigate to nearest shelters.
-            </p>
+            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+              <p className="text-xs sm:text-sm text-[#14231F]/70">
+                Welcome {user?.name || 'Citizen'} • GPS: {userCoords ? `${userCoords.lat.toFixed(4)}°N, ${userCoords.lng.toFixed(4)}°E` : 'Auto-detecting...'}
+              </p>
+              <button
+                type="button"
+                id="citizen-update-gps-btn"
+                onClick={handleUpdateLocation}
+                className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] text-[#14231F] text-[10px] font-mono rounded font-semibold transition-colors"
+                title="Acquire current browser GPS coordinates and sync with alert radius delivery system"
+              >
+                📍 Update My GPS
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              id="citizen-update-gps-btn"
-              onClick={handleUpdateLocation}
-              className="flex items-center gap-1.5 px-3 py-3 bg-[#FAF8F5] hover:bg-[#EFECE4] border border-[#D8D3C7] text-[#14231F] font-mono text-xs rounded transition-colors"
-              title="Acquire current browser GPS coordinates and sync with alert radius delivery system"
-            >
-              <span>📍 UPDATE MY GPS</span>
-            </button>
-
+          <div className="flex items-center gap-2.5 shrink-0">
             <button
               id="report-hazard-btn"
               onClick={() => setHazardModalOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-3 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] text-[#14231F] font-display font-bold text-xs sm:text-sm rounded transition-colors"
+              className="flex items-center gap-1.5 px-4 py-3 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] text-[#14231F] font-display font-bold text-xs sm:text-sm rounded transition-colors whitespace-nowrap shrink-0"
             >
               <Camera className="w-4 h-4 text-[#C97A2B]" />
               <span>REPORT HAZARD</span>
