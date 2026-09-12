@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Camera, MapPin, AlertCircle, CheckCircle2, Loader2, X, WifiOff } from 'lucide-react';
 import api from '../services/api';
 import { enqueueAction, isManualOffline } from '../services/offlineQueue';
@@ -12,6 +12,12 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
   const [locating, setLocating] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [isQueuedOffline, setIsQueuedOffline] = useState(false);
+
+  useEffect(() => {
+    if (defaultCoords && typeof defaultCoords.lat === 'number' && typeof defaultCoords.lng === 'number') {
+      setCoords(defaultCoords);
+    }
+  }, [defaultCoords]);
 
   if (!isOpen) return null;
 

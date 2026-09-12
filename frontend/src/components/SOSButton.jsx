@@ -48,6 +48,13 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
     readBatteryStatus();
   }, []);
 
+  // Synchronize coordinates when parent GPS resolves
+  useEffect(() => {
+    if (defaultCoords && typeof defaultCoords.lat === 'number' && typeof defaultCoords.lng === 'number') {
+      setCoords(defaultCoords);
+    }
+  }, [defaultCoords]);
+
   const acquireLocation = () => {
     if (!navigator.geolocation) return;
     setLocating(true);

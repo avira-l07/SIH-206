@@ -23,12 +23,21 @@ export default function VolunteerDashboard() {
   const [activeTab, setActiveTab] = useState('PENDING'); // PENDING, IN_PROGRESS, RESOLVED
   const [viewMode, setViewMode] = useState('MAP'); // 'MAP', 'KANBAN', 'STORE'
   const [focusCoords, setFocusCoords] = useState(null);
-  const [volunteerCoords, setVolunteerCoords] = useState({ lat: user?.lat || 19.0596, lng: user?.lng || 72.8295 });
+  const [volunteerCoords, setVolunteerCoords] = useState({
+    lat: typeof user?.lat === 'number' ? user.lat : 19.0596,
+    lng: typeof user?.lng === 'number' ? user.lng : 72.8295,
+  });
   const [actionLoading, setActionLoading] = useState(false);
   const [locLoading, setLocLoading] = useState(false);
   const [assetSuggestions, setAssetSuggestions] = useState({});
   const [restockAlert, setRestockAlert] = useState(null);
   const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
+
+  useEffect(() => {
+    if (typeof user?.lat === 'number' && typeof user?.lng === 'number') {
+      setVolunteerCoords({ lat: user.lat, lng: user.lng });
+    }
+  }, [user]);
 
   const handleUpdateLocation = () => {
     if (!navigator.geolocation) {
@@ -51,7 +60,8 @@ export default function VolunteerDashboard() {
       (err) => {
         alert('Could not detect location: ' + err.message);
         setLocLoading(false);
-      }
+      },
+      { timeout: 8000, enableHighAccuracy: true }
     );
   };
 
@@ -75,10 +85,15 @@ export default function VolunteerDashboard() {
   useEffect(() => {
     loadData();
 
-    if (navigator.geolocation) {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => setVolunteerCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => console.log('Using default volunteer coordinates')
+        (pos) => {
+          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setVolunteerCoords(coords);
+          api.patch('/auth/location', coords).catch(() => {});
+        },
+        () => console.log('Using default volunteer coordinates'),
+        { timeout: 8000, enableHighAccuracy: true }
       );
     }
   }, []);

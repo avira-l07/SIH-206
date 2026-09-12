@@ -21,8 +21,18 @@ export default function CitizenDashboard() {
   const [hazardReports, setHazardReports] = useState([]);
   const [mySOSList, setMySOSList] = useState([]);
   const [focusCoords, setFocusCoords] = useState(null);
-  const [userCoords, setUserCoords] = useState({ lat: 19.0760, lng: 72.8777 });
+  const [userCoords, setUserCoords] = useState({
+    lat: typeof user?.lat === 'number' ? user.lat : 19.0760,
+    lng: typeof user?.lng === 'number' ? user.lng : 72.8777,
+  });
   const [hazardModalOpen, setHazardModalOpen] = useState(false);
+
+  // Synchronize with authenticated user's saved GPS if available
+  useEffect(() => {
+    if (typeof user?.lat === 'number' && typeof user?.lng === 'number') {
+      setUserCoords({ lat: user.lat, lng: user.lng });
+    }
+  }, [user]);
 
   // Fetch initial data
   const fetchData = async () => {
@@ -45,13 +55,17 @@ export default function CitizenDashboard() {
   useEffect(() => {
     fetchData();
 
-    // Get browser geolocation
-    if (navigator.geolocation) {
+    // Auto-detect browser GPS on mount and sync to backend for radius alert delivery
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setUserCoords(coords);
+          // Persist coordinates silently so citizen receives radius alerts
+          api.patch('/auth/location', coords).catch(() => {});
         },
-        () => console.log('Using default Mumbai coordinates')
+        (err) => console.log('Browser geolocation notice:', err.message),
+        { timeout: 8000, enableHighAccuracy: true }
       );
     }
   }, []);
