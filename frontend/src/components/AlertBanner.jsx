@@ -10,39 +10,123 @@ import {
   ShieldAlert,
   MapPin,
   CheckCircle,
+  RotateCcw,
 } from 'lucide-react';
 
 /**
  * Web Audio API synthesized emergency alert siren
  * Generates alternating dual-tone acoustic disaster warning frequencies (880Hz / 660Hz)
+ *
+ * Reliability & UX Guarantees:
+ * 1. Auto-Termination: Automatically silences after 6 seconds to prevent sensory overload/ear fatigue.
+ * 2. Autoplay Recovery: Modern browsers block unprompted AudioContext starts on WebSocket events.
+ *    Attaches passive window event listeners to immediately unlock and play as soon as the citizen touches the screen.
+ * 3. Envelope Shaping: Soft attack and decay ramps eliminate harsh audio clipping.
  */
 class EmergencyAudioAlert {
-  constructor() {
+  constructor(onStatusChange) {
     this.audioCtx = null;
     this.oscillator = null;
     this.gainNode = null;
     this.intervalId = null;
+    this.stopTimer = null;
+    this.countdownInterval = null;
     this.isPlaying = false;
+    this.remainingSeconds = 6;
+    this.onStatusChange = onStatusChange || (() => {});
+    this.autoplayBlocked = false;
+
+    this.attachPassiveUnlock();
   }
 
-  start() {
+  attachPassiveUnlock() {
+    if (typeof window === 'undefined') return;
+    const unlock = () => {
+      if (this.audioCtx && this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume().then(() => {
+          this.autoplayBlocked = false;
+          this.onStatusChange({ isPlaying: this.isPlaying, autoplayBlocked: false });
+        }).catch(() => {});
+      }
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+      window.removeEventListener('touchstart', unlock);
+    };
+    window.addEventListener('pointerdown', unlock, { passive: true, once: true });
+    window.addEventListener('keydown', unlock, { passive: true, once: true });
+    window.addEventListener('touchstart', unlock, { passive: true, once: true });
+  }
+
+  getAudioContext() {
+    if (!this.audioCtx || this.audioCtx.state === 'closed') {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        this.audioCtx = new AudioContextClass();
+      }
+    }
+    return this.audioCtx;
+  }
+
+  start(durationSeconds = 6) {
     if (this.isPlaying) return;
     try {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return;
+      const ctx = this.getAudioContext();
+      if (!ctx) return;
 
-      this.audioCtx = new AudioContextClass();
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
+      if (ctx.state === 'suspended') {
+        ctx.resume()
+          .then(() => {
+            this.autoplayBlocked = false;
+            this.runAudioGraph(ctx, durationSeconds);
+          })
+          .catch(() => {
+            this.autoplayBlocked = true;
+            this.isPlaying = false;
+            this.onStatusChange({
+              isPlaying: false,
+              remainingSeconds: 0,
+              autoplayBlocked: true,
+              autoSilenced: false,
+            });
+
+            // Auto-play as soon as user performs first interaction anywhere on page
+            const oneTimeUnlock = () => {
+              window.removeEventListener('click', oneTimeUnlock);
+              window.removeEventListener('touchstart', oneTimeUnlock);
+              this.start(durationSeconds);
+            };
+            window.addEventListener('click', oneTimeUnlock, { once: true });
+            window.addEventListener('touchstart', oneTimeUnlock, { once: true });
+          });
+        return;
       }
 
-      this.gainNode = this.audioCtx.createGain();
-      this.gainNode.gain.setValueAtTime(0.2, this.audioCtx.currentTime); // controlled volume
-      this.gainNode.connect(this.audioCtx.destination);
+      this.runAudioGraph(ctx, durationSeconds);
+    } catch (err) {
+      console.warn('[AlertBanner] Could not play emergency siren:', err.message);
+      this.autoplayBlocked = true;
+      this.onStatusChange({
+        isPlaying: false,
+        remainingSeconds: 0,
+        autoplayBlocked: true,
+        autoSilenced: false,
+      });
+    }
+  }
 
-      this.oscillator = this.audioCtx.createOscillator();
-      this.oscillator.type = 'sawtooth';
-      this.oscillator.frequency.setValueAtTime(880, this.audioCtx.currentTime);
+  runAudioGraph(ctx, durationSeconds) {
+    if (this.isPlaying) return;
+    try {
+      // Soft gain envelope ramp to prevent harsh pop
+      this.gainNode = ctx.createGain();
+      this.gainNode.gain.setValueAtTime(0.001, ctx.currentTime);
+      this.gainNode.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.1);
+      this.gainNode.connect(ctx.destination);
+
+      // Dual-frequency EAS emergency siren (triangle wave for clear, non-abrasive urgency)
+      this.oscillator = ctx.createOscillator();
+      this.oscillator.type = 'triangle';
+      this.oscillator.frequency.setValueAtTime(880, ctx.currentTime);
       this.oscillator.connect(this.gainNode);
       this.oscillator.start();
 
@@ -51,46 +135,93 @@ class EmergencyAudioAlert {
         if (!this.oscillator || !this.audioCtx) return;
         toggle = !toggle;
         const targetFreq = toggle ? 660 : 880;
-        this.oscillator.frequency.setTargetAtTime(targetFreq, this.audioCtx.currentTime, 0.08);
+        this.oscillator.frequency.setTargetAtTime(targetFreq, this.audioCtx.currentTime, 0.06);
       }, 450);
 
       this.isPlaying = true;
+      this.remainingSeconds = durationSeconds;
+      this.autoplayBlocked = false;
+
+      this.onStatusChange({
+        isPlaying: true,
+        remainingSeconds: this.remainingSeconds,
+        autoplayBlocked: false,
+        autoSilenced: false,
+      });
+
+      // 1-second countdown tick
+      if (this.countdownInterval) clearInterval(this.countdownInterval);
+      this.countdownInterval = setInterval(() => {
+        this.remainingSeconds -= 1;
+        if (this.remainingSeconds <= 0) {
+          clearInterval(this.countdownInterval);
+        } else {
+          this.onStatusChange({
+            isPlaying: true,
+            remainingSeconds: this.remainingSeconds,
+            autoplayBlocked: false,
+            autoSilenced: false,
+          });
+        }
+      }, 1000);
+
+      // Auto-termination timer: silence after fixed duration (6 seconds)
+      if (this.stopTimer) clearTimeout(this.stopTimer);
+      if (durationSeconds > 0) {
+        this.stopTimer = setTimeout(() => {
+          this.stop(true); // true = auto-stopped
+        }, durationSeconds * 1000);
+      }
     } catch (err) {
-      console.warn('[AlertBanner] Could not play synthesized emergency siren:', err.message);
+      console.warn('[AlertBanner] Error initializing audio graph:', err);
     }
   }
 
-  stop() {
+  stop(autoSilenced = false) {
+    if (this.stopTimer) {
+      clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
+    }
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
-    if (this.oscillator) {
+
+    if (this.gainNode && this.audioCtx) {
       try {
-        this.oscillator.stop();
-        this.oscillator.disconnect();
-      } catch {
-        // ignore cleanup error
-      }
-      this.oscillator = null;
+        // Soft decay before stop
+        this.gainNode.gain.linearRampToValueAtTime(0.0001, this.audioCtx.currentTime + 0.15);
+      } catch {}
     }
-    if (this.gainNode) {
-      try {
-        this.gainNode.disconnect();
-      } catch {
-        // ignore cleanup error
+
+    setTimeout(() => {
+      if (this.oscillator) {
+        try {
+          this.oscillator.stop();
+          this.oscillator.disconnect();
+        } catch {}
+        this.oscillator = null;
       }
-      this.gainNode = null;
-    }
-    if (this.audioCtx) {
-      try {
-        this.audioCtx.close();
-      } catch {
-        // ignore cleanup error
+      if (this.gainNode) {
+        try {
+          this.gainNode.disconnect();
+        } catch {}
+        this.gainNode = null;
       }
-      this.audioCtx = null;
-    }
+    }, 160);
+
     this.isPlaying = false;
+    this.remainingSeconds = 0;
+    this.onStatusChange({
+      isPlaying: false,
+      remainingSeconds: 0,
+      autoplayBlocked: false,
+      autoSilenced,
+    });
   }
 }
 
@@ -117,6 +248,13 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
   const [dismissedIds, setDismissedIds] = useState(() => readStoredIds(dismissedKey));
   const [fullscreenDismissedIds, setFullscreenDismissedIds] = useState(() => readStoredIds(fullscreenKey));
   const [isMuted, setIsMuted] = useState(false);
+  const [alarmState, setAlarmState] = useState({
+    isPlaying: false,
+    remainingSeconds: 6,
+    autoplayBlocked: false,
+    autoSilenced: false,
+  });
+
   const audioAlertRef = useRef(null);
 
   // Reload stored dismissals when active user/role changes
@@ -143,14 +281,16 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
     (a) => a.severity === 'CRITICAL' && !fullscreenDismissedIds.includes(a.id)
   );
 
-  // Audio trigger on critical alert receipt
+  // Audio trigger on critical alert receipt with 6-second auto-termination
   useEffect(() => {
     if (!audioAlertRef.current) {
-      audioAlertRef.current = new EmergencyAudioAlert();
+      audioAlertRef.current = new EmergencyAudioAlert((status) => {
+        setAlarmState((prev) => ({ ...prev, ...status }));
+      });
     }
 
     if (unacknowledgedCritical && !isMuted) {
-      audioAlertRef.current.start();
+      audioAlertRef.current.start(6);
     } else {
       audioAlertRef.current.stop();
     }
@@ -161,6 +301,23 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
       }
     };
   }, [unacknowledgedCritical, isMuted]);
+
+  // Explicitly replay 6-second siren
+  const handleReplaySiren = () => {
+    setIsMuted(false);
+    if (audioAlertRef.current) {
+      audioAlertRef.current.stop();
+      audioAlertRef.current.start(6);
+    }
+  };
+
+  // Explicitly silence/mute siren
+  const handleSilenceSiren = () => {
+    setIsMuted(true);
+    if (audioAlertRef.current) {
+      audioAlertRef.current.stop();
+    }
+  };
 
   // Handle explicit dismissal of full-screen takeover
   const handleAcknowledgeCritical = (alertId) => {
@@ -196,10 +353,10 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
             {/* Pulsing hazard background aura */}
             <div className="absolute -top-24 -right-24 w-64 h-64 bg-[#B23A2E]/25 rounded-full blur-3xl pointer-events-none animate-pulse" />
 
-            {/* Header with audio mute & flashing siren */}
-            <div className="flex items-start justify-between gap-3 border-b border-white/15 pb-4">
+            {/* Header with audio controls & flashing siren */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/15 pb-4">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-lg bg-[#B23A2E] text-white flex items-center justify-center animate-bounce">
+                <div className="w-12 h-12 rounded-lg bg-[#B23A2E] text-white flex items-center justify-center animate-bounce shrink-0">
                   <ShieldAlert className="w-7 h-7" />
                 </div>
                 <div>
@@ -218,15 +375,62 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setIsMuted(!isMuted)}
-                className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors"
-                title={isMuted ? 'Unmute Emergency Siren' : 'Mute Emergency Siren'}
-              >
-                {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5 animate-pulse text-[#E5A93C]" />}
-              </button>
+              {/* Siren Status & Control Widget */}
+              <div className="flex items-center gap-2 self-end sm:self-center">
+                {alarmState.isPlaying ? (
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#B23A2E]/40 border border-[#B23A2E] text-white rounded-lg text-xs font-mono font-bold animate-pulse">
+                      <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+                      <span>SIREN ({alarmState.remainingSeconds}s)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSilenceSiren}
+                      className="px-2.5 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded-lg text-xs font-mono flex items-center gap-1 transition-colors"
+                      title="Silence emergency siren"
+                    >
+                      <VolumeX className="w-4 h-4 text-white/80" />
+                      <span>Silence</span>
+                    </button>
+                  </div>
+                ) : alarmState.autoplayBlocked ? (
+                  <button
+                    type="button"
+                    onClick={handleReplaySiren}
+                    className="px-3 py-1.5 bg-[#E5A93C] hover:bg-[#d6982f] text-[#14231F] font-bold rounded-lg text-xs font-mono flex items-center gap-1.5 animate-bounce shadow-md transition-transform active:scale-95"
+                    title="Browser blocked automatic sound. Click to play alarm!"
+                  >
+                    <Volume2 className="w-4 h-4 text-[#14231F]" />
+                    <span>🔊 SOUND ALARM</span>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-mono text-white/50">
+                      {alarmState.autoSilenced ? 'Auto-silenced (6s)' : 'Muted'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleReplaySiren}
+                      className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-mono flex items-center gap-1 transition-colors"
+                      title="Replay 6-second emergency siren"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-[#E5A93C]" />
+                      <span>Replay</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Autoplay Blocked Informational Banner */}
+            {alarmState.autoplayBlocked && (
+              <div className="bg-amber-500/20 border border-amber-500/40 rounded-lg p-2.5 flex items-center gap-2 text-xs font-mono text-amber-200">
+                <VolumeX className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>
+                  Browser policy blocked automated background siren. Tap <strong>SOUND ALARM</strong> above or click anywhere to sound warning siren.
+                </span>
+              </div>
+            )}
 
             {/* Alert Severity / Hazard / Region Badges */}
             <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
@@ -283,6 +487,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
           </div>
         </div>
       )}
+
 
       {/* 2. PERSISTENT TOP BANNER (Active Alerts) */}
       <aside
