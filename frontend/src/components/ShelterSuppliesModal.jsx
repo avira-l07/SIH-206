@@ -172,7 +172,7 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-3 bg-black/75 backdrop-blur-sm overflow-y-auto"
     >
       <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded max-w-3xl w-full p-5 shadow-2xl text-[#14231F] flex flex-col max-h-[92vh]">
         {/* Header */}

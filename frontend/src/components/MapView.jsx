@@ -215,9 +215,9 @@ export default function MapView({
   };
 
   return (
-    <div className="w-full h-full min-h-[420px] rounded border border-[#D8D3C7] overflow-hidden relative shadow-xs">
+    <div className="w-full h-full min-h-[420px] rounded border border-[#D8D3C7] overflow-hidden relative shadow-xs isolate">
       {/* Tactical Map Toolbar (Region Jump & Fit All Incidents) */}
-      <div className="absolute top-2 right-2 z-[1000] flex flex-wrap items-center gap-1.5 bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded p-1.5 shadow-md font-mono text-xs">
+      <div className="absolute top-2 right-2 z-[450] flex flex-wrap items-center gap-1.5 bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded p-1.5 shadow-md font-mono text-xs">
         <button
           type="button"
           onClick={handleFitAll}
@@ -247,7 +247,7 @@ export default function MapView({
 
       {/* Offline Tile Notice (Labeled Limitation) */}
       {isOffline && (
-        <div className="absolute bottom-2 left-2 right-2 z-[1000] bg-[#14231F]/90 text-[#F6F4EF] border border-[#D8D3C7] rounded px-3 py-1.5 text-xs font-mono flex items-center justify-between shadow-lg">
+        <div className="absolute bottom-2 left-2 right-2 z-[450] bg-[#14231F]/90 text-[#F6F4EF] border border-[#D8D3C7] rounded px-3 py-1.5 text-xs font-mono flex items-center justify-between shadow-lg">
           <div className="flex items-center gap-2">
             <span className="text-amber-400 font-bold">⚠️ OFFLINE MODE:</span>
             <span>Map tiles limited to cached areas, live markers remain active.</span>

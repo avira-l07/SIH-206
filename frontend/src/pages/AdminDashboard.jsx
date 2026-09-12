@@ -850,7 +850,7 @@ export default function AdminDashboard() {
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto"
         >
           <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded max-w-lg w-full p-6 shadow-xl text-[#14231F]">
             <div className="flex items-center justify-between pb-3 border-b border-[#D8D3C7]">
@@ -1064,7 +1064,7 @@ export default function AdminDashboard() {
 
       {/* Registered Phone Numbers & Subscribers Modal */}
       {subscribersModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded-lg shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in duration-200">
             {/* Header */}
             <div className="bg-[#14231F] text-[#F6F4EF] px-5 py-4 flex items-center justify-between">
