@@ -321,7 +321,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
               {/* Execution Feedback */}
               {lastResult && (
                 <div
-                  className={`p-2 rounded border text-xs font-mono flex items-start gap-2 ${
+                  className={`p-2.5 rounded border text-xs font-mono flex items-start gap-2 ${
                     lastResult.status === 'SUCCESS'
                       ? 'bg-[#2E6E4E]/10 border-[#2E6E4E] text-[#2E6E4E]'
                       : lastResult.status === 'QUEUED_OFFLINE'
@@ -334,13 +334,26 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                   ) : (
                     <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   )}
-                  <div>
+                  <div className="flex-1 space-y-1">
                     <div className="font-bold uppercase text-[10px]">{lastResult.status}</div>
                     <div>{lastResult.message}</div>
+                    {lastResult.status === 'QUEUED_OFFLINE' && (
+                      <div className="pt-1.5">
+                        <button
+                          type="button"
+                          onClick={handleToggleOutage}
+                          className="px-3 py-1.5 bg-[#2E6E4E] hover:bg-[#23583e] text-white rounded text-xs font-mono font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>⚡ Restore Connectivity & Sync to Server Now</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
             </div>
+
 
             {/* Offline Ingestion Audit Logs */}
             <div className="space-y-1.5 pt-2 border-t border-[#D8D3C7]">

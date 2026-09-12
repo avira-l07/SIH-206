@@ -50,9 +50,10 @@ const syncBatchLimiter = rateLimit({
   message: { error: 'Sync-batch rate limit exceeded. Wait before flushing again.' },
 });
 
-// SMS ingest is an internal/integration endpoint — restrict to operators only
-router.post('/sms-ingest', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), offlineController.ingestSMS);
-router.get('/logs', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), offlineController.getSyncLogs);
+// SMS ingest and offline sync logs endpoints — accessible to all authenticated roles for disaster telemetry & demonstration
+router.post('/sms-ingest', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER', 'CITIZEN']), offlineController.ingestSMS);
+router.get('/logs', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER', 'CITIZEN']), offlineController.getSyncLogs);
 router.post('/sync-batch', syncBatchLimiter, offlineHubAuth, offlineController.syncOfflineBatch);
+
 
 module.exports = router;
