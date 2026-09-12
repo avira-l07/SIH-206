@@ -218,7 +218,7 @@ export default function CitizenDashboard() {
                 CITIZEN RESILIENCE & SOS CONSOLE
               </h1>
             </div>
-            <p className="text-xs text-[#14231F]/70 font-mono mt-0.5">
+            <p className="text-xs sm:text-sm text-[#14231F]/70 mt-0.5">
               Welcome {user?.name || 'Citizen'}. Monitor live threats, verify ground hazards, or navigate to nearest shelters.
             </p>
           </div>

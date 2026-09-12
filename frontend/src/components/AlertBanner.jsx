@@ -600,45 +600,6 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Real-time Alarm Audio Controls on Top Banner */}
-            {alarmState.isPlaying ? (
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-1 px-2 py-0.5 bg-black/30 text-white rounded text-xs font-mono font-bold animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
-                  <span>{alarmState.tier === 'CRITICAL' ? 'SIREN' : 'ALERT'} ({alarmState.remainingSeconds}s)</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSilenceSiren}
-                  className="px-2 py-0.5 bg-black/25 hover:bg-black/40 text-white rounded text-xs font-mono flex items-center gap-1 transition-colors"
-                  title="Silence emergency alarm"
-                >
-                  <VolumeX className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Silence</span>
-                </button>
-              </div>
-            ) : alarmState.autoplayBlocked ? (
-              <button
-                type="button"
-                onClick={handleReplaySiren}
-                className="px-2.5 py-1 bg-[#E5A93C] hover:bg-[#d6982f] text-[#14231F] font-bold rounded text-xs font-mono flex items-center gap-1.5 animate-bounce shadow transition-transform active:scale-95"
-                title="Browser blocked automatic alarm sound. Click to play siren!"
-              >
-                <Volume2 className="w-3.5 h-3.5 text-[#14231F]" />
-                <span>🔊 SOUND ALARM</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleReplaySiren}
-                className="px-2 py-0.5 bg-black/20 hover:bg-black/35 text-white rounded text-xs font-mono flex items-center gap-1 transition-colors"
-                title="Replay alarm sound"
-              >
-                <RotateCcw className="w-3 h-3 text-[#E5A93C]" />
-                <span className="hidden sm:inline">Sound</span>
-              </button>
-            )}
-
             {activeAlerts.length > 1 && (
               <span className="text-xs font-mono bg-black/20 px-2 py-0.5 rounded">
                 +{activeAlerts.length - 1} more
@@ -648,7 +609,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
             {onSelectAlert && (
               <button
                 onClick={() => onSelectAlert(currentAlert)}
-                className="text-xs underline flex items-center gap-0.5 hover:opacity-80 font-mono"
+                className="text-xs underline flex items-center gap-0.5 hover:opacity-80"
               >
                 Focus Map <ChevronRight className="w-3.5 h-3.5" />
               </button>

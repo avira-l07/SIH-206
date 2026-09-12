@@ -84,7 +84,7 @@ export default function HazardConfirmationPrompt({ reports = [], userCoords, onC
   return (
     <div
       id="hazard-peer-confirmation-card"
-      className="bg-[#FFFFFF] border-2 border-[#C97A2B] rounded p-4 shadow-md flex flex-col gap-3 text-xs font-mono transition-all animate-fade-in"
+      className="bg-[#FFFFFF] border-2 border-[#C97A2B] rounded p-4 shadow-md flex flex-col gap-3 text-xs transition-all animate-fade-in"
     >
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-start gap-3">
@@ -93,22 +93,22 @@ export default function HazardConfirmationPrompt({ reports = [], userCoords, onC
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-[#C97A2B] uppercase text-[11px] tracking-wide">
+              <span className="font-bold text-[#C97A2B] font-mono uppercase text-[11px] tracking-wide shrink-0">
                 GROUND VERIFICATION // NEARBY HAZARD REPORT
               </span>
-              <span className="px-1.5 py-0.5 rounded bg-[#9A968C]/20 text-[#14231F] text-[10px] font-bold">
-                {distMeters}m away
+              <span className="px-1.5 py-0.5 rounded bg-[#9A968C]/20 text-[#14231F] text-[10px] font-bold font-mono shrink-0 whitespace-nowrap">
+                {distMeters < 1000 ? `${distMeters}m away` : `${(distMeters / 1000).toFixed(1)}km away`}
               </span>
               {currentReport.severityBenchmark && (
                 <span
-                  className={`px-1.5 py-0.5 rounded border text-[10px] font-bold uppercase ${
+                  className={`px-1.5 py-0.5 rounded border text-[10px] font-bold font-mono uppercase shrink-0 whitespace-nowrap ${
                     benchmarkBadgeColors[currentReport.severityBenchmark] || 'bg-gray-100'
                   }`}
                 >
                   {currentReport.severityBenchmark}-DEEP
                 </span>
               )}
-              <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px]">
+              <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px] font-mono shrink-0 whitespace-nowrap">
                 TIER: <strong>{currentReport.confidenceTier}</strong>
               </span>
             </div>
