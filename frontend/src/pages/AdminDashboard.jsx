@@ -16,6 +16,10 @@ import {
   Loader2,
   Map,
   Kanban,
+  Phone,
+  Users,
+  Search,
+  X,
 } from 'lucide-react';
 import ShelterSuppliesModal from '../components/ShelterSuppliesModal';
 
@@ -49,6 +53,28 @@ export default function AdminDashboard() {
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState(null);
   const [registryStats, setRegistryStats] = useState({ totalPhones: 0, totalPushSubs: 0 });
+
+  // Subscriber Directory Modal State
+  const [subscribersModalOpen, setSubscribersModalOpen] = useState(false);
+  const [subscribersData, setSubscribersData] = useState({ phoneRegistrations: [], citizenUsers: [], pushSubscriptionsCount: 0 });
+  const [subscribersLoading, setSubscribersLoading] = useState(false);
+  const [subscriberSearch, setSubscriberSearch] = useState('');
+  const [subscriberTab, setSubscriberTab] = useState('phones');
+
+  const openSubscribersModal = async () => {
+    setSubscribersModalOpen(true);
+    setSubscribersLoading(true);
+    try {
+      const res = await api.get('/registry/subscribers');
+      if (res.data?.success) {
+        setSubscribersData(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to load registered subscribers:', err);
+    } finally {
+      setSubscribersLoading(false);
+    }
+  };
 
   const fetchConsoleData = async () => {
     try {
@@ -537,11 +563,22 @@ export default function AdminDashboard() {
                 <span className="text-[#4ADE80] font-bold text-[10px]">3 DELIVERY CHANNELS ARMED</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                <div className="bg-white/10 p-1.5 rounded">
-                  <div className="text-sm font-bold text-[#E5A93C]">{registryStats.totalPhones}</div>
-                  <div className="text-[10px] text-white/70">Phones via SMS</div>
-                </div>
-                <div className="bg-white/10 p-1.5 rounded">
+                <button
+                  type="button"
+                  onClick={openSubscribersModal}
+                  className="bg-white/10 hover:bg-white/20 transition-all p-1.5 rounded cursor-pointer text-center group border border-transparent hover:border-[#E5A93C]/40"
+                  title="Click to view all registered phone numbers"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span className="text-sm font-bold text-[#E5A93C] group-hover:scale-105 transition-transform">
+                      {registryStats.totalPhones}
+                    </span>
+                    <span className="text-[9px] text-[#E5A93C] opacity-75 group-hover:opacity-100">👁️</span>
+                  </div>
+                  <div className="text-[10px] text-white/70 group-hover:text-white">Phones via SMS</div>
+                  <div className="text-[8px] text-[#E5A93C]/80 mt-0.5 font-mono">View List →</div>
+                </button>
+                <div className="bg-white/10 p-1.5 rounded flex flex-col justify-center">
                   <div className="text-sm font-bold text-[#4ADE80]">{registryStats.totalPushSubs}</div>
                   <div className="text-[10px] text-white/70">Web Push Subscribers</div>
                 </div>
@@ -669,6 +706,207 @@ export default function AdminDashboard() {
         onClose={() => setViewingSuppliesShelter(null)}
         shelter={viewingSuppliesShelter}
       />
+
+      {/* Registered Phone Numbers & Subscribers Modal */}
+      {subscribersModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded-lg shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in duration-200">
+            {/* Header */}
+            <div className="bg-[#14231F] text-[#F6F4EF] px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-[#E5A93C]/20 text-[#E5A93C] rounded">
+                  <Phone className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-display font-bold text-sm tracking-wide">
+                    REGISTERED SUBSCRIBERS & CITIZEN DIRECTORY
+                  </h2>
+                  <p className="text-[11px] text-white/60 font-mono">
+                    Emergency Alert Dispatch Recipient Registry
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSubscribersModalOpen(false)}
+                className="text-white/60 hover:text-white p-1 rounded transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Info notice about SMS reception */}
+            <div className="bg-[#FAF8F5] border-b border-[#D8D3C7] px-5 py-2.5 text-xs text-[#14231F]/80 flex items-start gap-2">
+              <span className="text-[#E5A93C] text-sm leading-none mt-0.5">ℹ️</span>
+              <p className="text-[11px] leading-relaxed">
+                <strong>Where are SMS received?</strong> Broadcasts sent to these numbers go via <strong>Twilio</strong> to recipient mobile phones (when credentials are in <code>.env</code>) or appear in the <strong>backend server console logs</strong> in simulated/dev mode.
+              </p>
+            </div>
+
+            {/* Tabs & Search */}
+            <div className="p-4 border-b border-[#D8D3C7] bg-[#F6F4EF]/50 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-1 bg-[#D8D3C7]/40 p-1 rounded-md w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setSubscriberTab('phones')}
+                  className={`px-3 py-1.5 rounded text-xs font-mono font-bold transition-all ${
+                    subscriberTab === 'phones'
+                      ? 'bg-[#14231F] text-white shadow-sm'
+                      : 'text-[#14231F]/70 hover:text-[#14231F]'
+                  }`}
+                >
+                  Public SMS Subscriptions ({subscribersData.phoneRegistrations?.length || 0})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubscriberTab('citizens')}
+                  className={`px-3 py-1.5 rounded text-xs font-mono font-bold transition-all ${
+                    subscriberTab === 'citizens'
+                      ? 'bg-[#14231F] text-white shadow-sm'
+                      : 'text-[#14231F]/70 hover:text-[#14231F]'
+                  }`}
+                >
+                  Citizen Accounts ({subscribersData.citizenUsers?.length || 0})
+                </button>
+              </div>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[#14231F]/40" />
+                <input
+                  type="text"
+                  placeholder="Filter by phone, name, region..."
+                  value={subscriberSearch}
+                  onChange={(e) => setSubscriberSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-white border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
+                />
+              </div>
+            </div>
+
+            {/* List Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {subscribersLoading ? (
+                <div className="py-12 flex flex-col items-center justify-center text-[#14231F]/50 gap-2">
+                  <Loader2 className="w-6 h-6 animate-spin text-[#14231F]" />
+                  <span className="text-xs font-mono">Loading registered subscriber records...</span>
+                </div>
+              ) : subscriberTab === 'phones' ? (
+                // Public SMS Phone Registrations
+                subscribersData.phoneRegistrations?.filter((r) => {
+                  const q = subscriberSearch.toLowerCase();
+                  return (
+                    r.phoneNumber?.toLowerCase().includes(q) ||
+                    (r.region && r.region.toLowerCase().includes(q))
+                  );
+                }).length === 0 ? (
+                  <div className="py-12 text-center text-xs text-[#14231F]/60 font-mono">
+                    No phone registrations match "{subscriberSearch}"
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#D8D3C7] border border-[#D8D3C7] rounded-md overflow-hidden bg-white">
+                    <div className="grid grid-cols-12 bg-[#FAF8F5] px-3 py-2 text-[10px] font-mono text-[#14231F]/70 uppercase font-bold border-b border-[#D8D3C7]">
+                      <span className="col-span-5">Phone Number</span>
+                      <span className="col-span-4">Subscribed Region</span>
+                      <span className="col-span-3 text-right">Registered On</span>
+                    </div>
+                    {subscribersData.phoneRegistrations
+                      ?.filter((r) => {
+                        const q = subscriberSearch.toLowerCase();
+                        return (
+                          r.phoneNumber?.toLowerCase().includes(q) ||
+                          (r.region && r.region.toLowerCase().includes(q))
+                        );
+                      })
+                      .map((sub) => (
+                        <div
+                          key={sub.id}
+                          className="grid grid-cols-12 items-center px-3 py-2.5 text-xs hover:bg-[#FAF8F5]/80 transition-colors"
+                        >
+                          <div className="col-span-5 font-mono font-bold text-[#14231F] flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-[#4ADE80]" />
+                            {sub.phoneNumber}
+                          </div>
+                          <div className="col-span-4 font-mono text-[#14231F]/80">
+                            {sub.region ? (
+                              <span className="bg-[#14231F]/5 px-2 py-0.5 rounded text-[11px] font-bold">
+                                {sub.region}
+                              </span>
+                            ) : (
+                              <span className="text-[#14231F]/40 italic">All Regions</span>
+                            )}
+                          </div>
+                          <div className="col-span-3 text-right text-[11px] font-mono text-[#14231F]/60">
+                            {new Date(sub.createdAt).toLocaleDateString()}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )
+              ) : (
+                // Citizen Accounts
+                subscribersData.citizenUsers?.filter((u) => {
+                  const q = subscriberSearch.toLowerCase();
+                  return (
+                    u.name?.toLowerCase().includes(q) ||
+                    u.phone?.toLowerCase().includes(q) ||
+                    u.email?.toLowerCase().includes(q)
+                  );
+                }).length === 0 ? (
+                  <div className="py-12 text-center text-xs text-[#14231F]/60 font-mono">
+                    No citizen users match "{subscriberSearch}"
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#D8D3C7] border border-[#D8D3C7] rounded-md overflow-hidden bg-white">
+                    <div className="grid grid-cols-12 bg-[#FAF8F5] px-3 py-2 text-[10px] font-mono text-[#14231F]/70 uppercase font-bold border-b border-[#D8D3C7]">
+                      <span className="col-span-4">Citizen Name</span>
+                      <span className="col-span-4">Phone Number</span>
+                      <span className="col-span-4 text-right">Account Email</span>
+                    </div>
+                    {subscribersData.citizenUsers
+                      ?.filter((u) => {
+                        const q = subscriberSearch.toLowerCase();
+                        return (
+                          u.name?.toLowerCase().includes(q) ||
+                          u.phone?.toLowerCase().includes(q) ||
+                          u.email?.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((cit) => (
+                        <div
+                          key={cit.id}
+                          className="grid grid-cols-12 items-center px-3 py-2.5 text-xs hover:bg-[#FAF8F5]/80 transition-colors"
+                        >
+                          <div className="col-span-4 font-semibold text-[#14231F] flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-[#3B82F6]" />
+                            {cit.name}
+                          </div>
+                          <div className="col-span-4 font-mono font-bold text-[#E5A93C]">
+                            {cit.phone || 'N/A'}
+                          </div>
+                          <div className="col-span-4 text-right text-[11px] font-mono text-[#14231F]/60 truncate">
+                            {cit.email}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="bg-[#FAF8F5] border-t border-[#D8D3C7] px-5 py-3 flex items-center justify-between">
+              <span className="text-[11px] font-mono text-[#14231F]/60">
+                Total Enrolled Recipients: {(subscribersData.phoneRegistrations?.length || 0) + (subscribersData.citizenUsers?.length || 0)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSubscribersModalOpen(false)}
+                className="px-4 py-1.5 bg-[#14231F] hover:bg-[#14231F]/90 text-white font-mono text-xs rounded transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

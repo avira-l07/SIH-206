@@ -190,10 +190,57 @@ async function getVapidKey(req, res) {
   }
 }
 
+/**
+ * Get Registered Phone Numbers & Subscribers (Authenticated ADMIN only)
+ * GET /api/registry/subscribers
+ */
+async function getRegisteredSubscribers(req, res) {
+  try {
+    const [phoneRegistrations, citizenUsers, pushSubscriptions] = await Promise.all([
+      prisma.phoneRegistration.findMany({
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.user.findMany({
+        where: { role: 'CITIZEN', phone: { not: null } },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          role: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.pushSubscription.findMany({
+        select: {
+          id: true,
+          region: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      phoneRegistrations,
+      citizenUsers,
+      pushSubscriptionsCount: pushSubscriptions.length,
+      pushSubscriptions,
+    });
+  } catch (error) {
+    console.error('Error fetching registered subscribers:', error);
+    return res.status(500).json({ error: 'Failed to fetch registered subscribers' });
+  }
+}
+
 module.exports = {
   registerPhone,
   registerPush,
   getRegistryStats,
   getVapidKey,
+  getRegisteredSubscribers,
   checkRegistryRateLimit, // exported for unit testing
 };
+
