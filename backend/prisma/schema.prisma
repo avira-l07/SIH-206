@@ -28,16 +28,17 @@ model User {
 }
 
 model Alert {
-  id         Int      @id @default(autoincrement())
-  hazardType String   // FLOOD, EARTHQUAKE, FIRE
-  severity   String   // WATCH, CRITICAL
+  id         Int       @id @default(autoincrement())
+  hazardType String    // FLOOD, EARTHQUAKE, FIRE
+  severity   String    // WATCH, CRITICAL
   region     String
   lat        Float
   lng        Float
-  radiusKm   Float    @default(5.0)
+  radiusKm   Float     @default(5.0)
   message    String
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime? // soft-delete: null = visible, non-null = deleted (audit trail)
 }
 
 model SOSRequest {

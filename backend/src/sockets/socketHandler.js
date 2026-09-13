@@ -91,6 +91,18 @@ function broadcastAlert(alert) {
   }
 }
 
+function broadcastAlertDeactivated(alert) {
+  if (ioInstance) {
+    ioInstance.emit('alert:deactivated', alert);
+  }
+}
+
+function broadcastAlertDeleted(payload) {
+  if (ioInstance) {
+    ioInstance.emit('alert:deleted', payload);
+  }
+}
+
 function broadcastSOSCreated(sos) {
   if (ioInstance) {
     ioInstance.emit('sos:created', sos);
@@ -169,6 +181,8 @@ module.exports = {
   setupSockets,
   getIO,
   broadcastAlert,
+  broadcastAlertDeactivated,
+  broadcastAlertDeleted,
   broadcastSOSCreated,
   broadcastSOSStatus,
   broadcastSOSVerified,

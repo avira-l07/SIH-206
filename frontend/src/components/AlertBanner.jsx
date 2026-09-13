@@ -305,6 +305,7 @@ function writeStoredIds(key, ids) {
 
 export default function AlertBanner({ alerts = [], onSelectAlert }) {
   const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
   const userScope = user?.id ? `u_${user.id}` : (user?.role ? `role_${user.role}` : 'anon');
   const dismissedKey = `sih_dismissed_alert_ids_${userScope}`;
   const fullscreenKey = `sih_fullscreen_dismissed_alert_ids_${userScope}`;
@@ -341,18 +342,29 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
     writeStoredIds(fullscreenKey, fullscreenDismissedIds);
   }, [fullscreenKey, fullscreenDismissedIds]);
 
-  const activeAlerts = alerts.filter(
-    (a) => a.active && !dismissedIds.includes(a.id)
-  );
+  // Disaster Management Admins broadcast alerts to the public;
+  // they should never receive civilian evacuation alarms, full-screen takeovers, or audio sirens
+  const activeAlerts = isAdmin
+    ? []
+    : alerts.filter((a) => a.active && !dismissedIds.includes(a.id));
 
   // Critical alerts that haven't been acknowledged in full-screen mode
-  const unacknowledgedCritical = activeAlerts.find(
-    (a) => a.severity === 'CRITICAL' && !fullscreenDismissedIds.includes(a.id)
-  );
+  const unacknowledgedCritical = isAdmin
+    ? null
+    : activeAlerts.find(
+        (a) => a.severity === 'CRITICAL' && !fullscreenDismissedIds.includes(a.id)
+      );
 
   // Prominently displayed alert in top banner
   const currentAlert = activeAlerts[0];
   const isCritical = currentAlert?.severity === 'CRITICAL';
+
+  // Stable string key representing the current set of active alert IDs —
+  // used as a dependency instead of the activeAlerts array to prevent the
+  // effect from re-running on every render (which would keep restarting
+  // the countdownInterval and preventing it from ticking down).
+  const activeAlertIdsKey = activeAlerts.map((a) => a.id).join(',');
+  const unacknowledgedCriticalId = unacknowledgedCritical?.id ?? null;
 
   // Audio trigger on alert arrival: handles both CRITICAL siren (6s) and WATCH chime (4s)
   useEffect(() => {
@@ -362,28 +374,35 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
       });
     }
 
-    if (isMuted || activeAlerts.length === 0) {
+    if (isAdmin) {
+      audioAlertRef.current.stop();
+      return;
+    }
+
+    if (isMuted || !activeAlertIdsKey) {
       return;
     }
 
     // 1. Unacknowledged CRITICAL emergency takes absolute priority
-    if (unacknowledgedCritical) {
-      if (!playedAlertIdsRef.current.has(unacknowledgedCritical.id)) {
-        playedAlertIdsRef.current.add(unacknowledgedCritical.id);
+    if (unacknowledgedCriticalId !== null) {
+      if (!playedAlertIdsRef.current.has(unacknowledgedCriticalId)) {
+        playedAlertIdsRef.current.add(unacknowledgedCriticalId);
         audioAlertRef.current.start('CRITICAL', 6);
       }
       return;
     }
 
     // 2. New WATCH advisory alert triggers distinct advisory chime
-    const unplayedWatch = activeAlerts.find(
+    // Re-read activeAlerts via ref to avoid stale closure without adding it to deps
+    const unplayedWatchId = activeAlerts.find(
       (a) => a.severity === 'WATCH' && !playedAlertIdsRef.current.has(a.id)
-    );
-    if (unplayedWatch) {
-      playedAlertIdsRef.current.add(unplayedWatch.id);
+    )?.id;
+    if (unplayedWatchId !== undefined) {
+      playedAlertIdsRef.current.add(unplayedWatchId);
       audioAlertRef.current.start('WATCH', 4);
     }
-  }, [alerts, unacknowledgedCritical, isMuted, activeAlerts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAlertIdsKey, unacknowledgedCriticalId, isMuted, isAdmin]);
 
   // Clean up audio on unmount
   useEffect(() => {

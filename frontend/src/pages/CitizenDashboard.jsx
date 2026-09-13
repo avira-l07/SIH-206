@@ -78,6 +78,10 @@ export default function CitizenDashboard() {
       setAlerts((prev) => [newAlert, ...prev.filter((a) => a.id !== newAlert.id)]);
     });
 
+    socket.on('alert:deactivated', (deactivated) => {
+      setAlerts((prev) => prev.filter((a) => a.id !== deactivated.id));
+    });
+
     socket.on('sos:status_changed', (updatedSOS) => {
       setMySOSList((prev) =>
         prev.map((s) => (s.id === updatedSOS.id ? updatedSOS : s))
@@ -114,6 +118,7 @@ export default function CitizenDashboard() {
 
     return () => {
       socket.off('alert:new');
+      socket.off('alert:deactivated');
       socket.off('sos:status_changed');
       socket.off('shelter:occupancy_changed');
       socket.off('shelter:audit_updated');

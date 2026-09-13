@@ -3,7 +3,6 @@ import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
 import MapView from '../components/MapView';
-import AlertBanner from '../components/AlertBanner';
 import TriageKanban from '../components/TriageKanban';
 import OfflineSimulationDrawer from '../components/OfflineSimulationDrawer';
 import {
@@ -49,6 +48,8 @@ export default function AdminDashboard() {
     message: 'Water levels rising rapidly (75mm/h). Immediate evacuation ordered for ground-floor residents.',
   });
   const [broadcastLoading, setBroadcastLoading] = useState(false);
+  const [broadcastSuccess, setBroadcastSuccess] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null); // { id, label } or null
 
   // Simulation Tool State
   const [simRegion, setSimRegion] = useState('Kurla East');
@@ -119,6 +120,21 @@ export default function AdminDashboard() {
       setAlerts((prev) => [newAlert, ...prev.filter((a) => a.id !== newAlert.id)]);
     });
 
+    socket.on('alert:deactivated', (deactivated) => {
+      setAlerts((prev) =>
+        prev.map((a) => (a.id === deactivated.id ? { ...a, active: false } : a))
+      );
+    });
+
+    socket.on('alert:deleted', (payload) => {
+      // Single delete or bulk: remove from local state by id(s)
+      if (payload.bulk) {
+        setAlerts((prev) => prev.filter((a) => a.active)); // keep only active ones
+      } else if (payload.id) {
+        setAlerts((prev) => prev.filter((a) => a.id !== payload.id));
+      }
+    });
+
     socket.on('shelter:occupancy_changed', (updatedShelter) => {
       setShelters((prev) =>
         prev.map((s) => (s.id === updatedShelter.id ? updatedShelter : s))
@@ -155,6 +171,8 @@ export default function AdminDashboard() {
       socket.off('sos:created');
       socket.off('sos:status_changed');
       socket.off('alert:new');
+      socket.off('alert:deactivated');
+      socket.off('alert:deleted');
       socket.off('shelter:occupancy_changed');
       socket.off('shelter:audit_updated');
       socket.off('shelter:restock_needed');
@@ -178,6 +196,8 @@ export default function AdminDashboard() {
       setAlerts((prev) => [res.data.alert, ...prev]);
       setFocusCoords([res.data.alert.lat, res.data.alert.lng]);
       setBroadcastOpen(false);
+      setBroadcastSuccess(`Alert #${res.data.alert.id} (${res.data.alert.severity} ${res.data.alert.hazardType}) broadcasted successfully to citizens and response teams.`);
+      setTimeout(() => setBroadcastSuccess(null), 6000);
     } catch (err) {
       console.error('Broadcast failed', err);
       alert(err.response?.data?.error || 'Failed to broadcast alert');
@@ -199,6 +219,35 @@ export default function AdminDashboard() {
     }
   };
 
+  // Soft-delete a resolved alert (only allowed when active=false)
+  const handleDeleteAlert = async (alertId) => {
+    try {
+      await api.delete(`/alerts/${alertId}`);
+      setAlerts((prev) => prev.filter((a) => a.id !== alertId));
+      setBroadcastSuccess(`Alert #${alertId} permanently removed from log.`);
+      setTimeout(() => setBroadcastSuccess(null), 5000);
+    } catch (err) {
+      console.error('Failed to delete alert', err);
+      alert(err.response?.data?.error || 'Failed to delete alert');
+    } finally {
+      setConfirmDelete(null);
+    }
+  };
+
+  // Bulk soft-delete all resolved/deactivated alerts
+  const handleBulkDeleteResolved = async () => {
+    try {
+      const res = await api.post('/alerts/bulk-delete-resolved');
+      const { count } = res.data;
+      setAlerts((prev) => prev.filter((a) => a.active));
+      setBroadcastSuccess(res.data.message || `${count} resolved alerts cleared.`);
+      setTimeout(() => setBroadcastSuccess(null), 5000);
+    } catch (err) {
+      console.error('Failed to bulk delete resolved alerts', err);
+      alert(err.response?.data?.error || 'Bulk delete failed');
+    }
+  };
+
   // Handle Weather / IoT Risk Simulation
   const handleRunSimulation = async () => {
     setSimLoading(true);
@@ -209,6 +258,8 @@ export default function AdminDashboard() {
       if (res.data.alert) {
         setAlerts((prev) => [res.data.alert, ...prev]);
         setFocusCoords([res.data.alert.lat, res.data.alert.lng]);
+        setBroadcastSuccess(`Simulation triggered ${res.data.alert.severity} alert for ${res.data.alert.region}.`);
+        setTimeout(() => setBroadcastSuccess(null), 6000);
       }
     } catch (err) {
       console.error('Simulation error', err);
@@ -253,10 +304,24 @@ export default function AdminDashboard() {
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-61px)]">
-      <AlertBanner
-        alerts={alerts}
-        onSelectAlert={(a) => setFocusCoords([a.lat, a.lng])}
-      />
+      {/* Broadcast Success Notification */}
+      {broadcastSuccess && (
+        <div className="bg-[#2E6E4E] text-white p-3 rounded mx-4 mt-2 flex items-center justify-between gap-3 shadow-md font-mono text-xs">
+          <div className="flex items-center gap-2">
+            <Radio className="w-4 h-4 text-emerald-300 shrink-0 animate-pulse" />
+            <div>
+              <span className="font-bold uppercase tracking-wider">OFFICIAL BROADCAST TRANSMITTED:</span>{' '}
+              {broadcastSuccess}
+            </div>
+          </div>
+          <button
+            onClick={() => setBroadcastSuccess(null)}
+            className="px-2 py-1 text-white/80 hover:text-white text-xs"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Critical Restock Alert Banner */}
       {restockAlert && (
@@ -431,13 +496,28 @@ export default function AdminDashboard() {
                     {activeAlertsCount} ACTIVE
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setBroadcastOpen(true)}
-                  className="px-3 py-1.5 bg-[#B23A2E] hover:bg-[#992c21] text-white font-bold text-xs rounded transition-colors font-mono"
-                >
-                  + NEW BROADCAST
-                </button>
+                <div className="flex items-center gap-2">
+                  {alerts.some((a) => !a.active) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Clear all ${alerts.filter((a) => !a.active).length} resolved/standby alert(s) from the log? This cannot be undone.`)) {
+                          handleBulkDeleteResolved();
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F]/70 hover:text-[#B23A2E] font-bold text-xs rounded transition-colors font-mono border border-[#D8D3C7]"
+                    >
+                      Clear Resolved
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setBroadcastOpen(true)}
+                    className="px-3 py-1.5 bg-[#B23A2E] hover:bg-[#992c21] text-white font-bold text-xs rounded transition-colors font-mono"
+                  >
+                    + NEW BROADCAST
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -527,9 +607,19 @@ export default function AdminDashboard() {
                                     Deactivate
                                   </button>
                                 ) : (
-                                  <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
-                                    STANDBY
-                                  </span>
+                                  <>
+                                    <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
+                                      STANDBY
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDelete({ id: alert.id, label: `#${alert.id} ${alert.severity} ${alert.hazardType} (${alert.region})` })}
+                                      className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 rounded text-[10px] font-bold transition-colors"
+                                      title="Permanently delete this resolved alert"
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -552,7 +642,7 @@ export default function AdminDashboard() {
                   <span>HAZARD RADII, SOS DISTRESS, VERIFIED HAZARD PINS & SHELTERS</span>
                 </div>
                 <MapView
-                  alerts={alerts}
+                  alerts={alerts.filter((a) => a.active)}
                   sosRequests={sosList}
                   shelters={shelters}
                   hazardReports={hazardReports}
@@ -726,9 +816,24 @@ export default function AdminDashboard() {
                     {activeAlertsCount} ACTIVE
                   </span>
                 </div>
-                <span className="text-xs font-mono text-[#14231F]/60">
-                  Real-time broadcast siren, SMS & Web Push dispatch
-                </span>
+                <div className="flex items-center gap-2">
+                  {alerts.some((a) => !a.active) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Clear all ${alerts.filter((a) => !a.active).length} resolved/standby alert(s) from the log? This cannot be undone.`)) {
+                          handleBulkDeleteResolved();
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F]/70 hover:text-[#B23A2E] font-bold text-xs rounded transition-colors font-mono border border-[#D8D3C7]"
+                    >
+                      Clear Resolved
+                    </button>
+                  )}
+                  <span className="text-xs font-mono text-[#14231F]/60">
+                    Real-time broadcast siren, SMS &amp; Web Push dispatch
+                  </span>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -818,9 +923,19 @@ export default function AdminDashboard() {
                                     Deactivate
                                   </button>
                                 ) : (
-                                  <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
-                                    STANDBY
-                                  </span>
+                                  <>
+                                    <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
+                                      STANDBY
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDelete({ id: alert.id, label: `#${alert.id} ${alert.severity} ${alert.hazardType} (${alert.region})` })}
+                                      className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 rounded text-[10px] font-bold transition-colors"
+                                      title="Permanently delete this resolved alert"
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -845,8 +960,49 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      {/* Confirm Delete Alert Dialog */}
+      {confirmDelete && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        >
+          <div className="bg-white border-2 border-red-200 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <div className="font-mono text-xs uppercase text-red-500 font-bold tracking-wider">Irreversible Action</div>
+                <h3 className="font-display font-bold text-[#14231F]">Delete Alert Log Entry?</h3>
+              </div>
+            </div>
+            <p className="text-sm text-[#14231F]/80 font-mono bg-[#FAF8F5] border border-[#D8D3C7] rounded p-3">
+              Alert {confirmDelete.label} will be <strong>permanently removed</strong> from the log. The broadcast was already deactivated, so no active emergency is affected. This action cannot be undone.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => handleDeleteAlert(confirmDelete.id)}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-lg transition-colors"
+              >
+                Delete Permanently
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 py-2.5 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F] font-semibold text-sm rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Broadcast Alert Modal */}
       {broadcastOpen && (
+
         <div
           role="dialog"
           aria-modal="true"

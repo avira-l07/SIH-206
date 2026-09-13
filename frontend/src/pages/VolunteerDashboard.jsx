@@ -157,6 +157,10 @@ export default function VolunteerDashboard() {
       setAlerts((prev) => [newAlert, ...prev.filter((a) => a.id !== newAlert.id)]);
     });
 
+    socket.on('alert:deactivated', (deactivated) => {
+      setAlerts((prev) => prev.filter((a) => a.id !== deactivated.id));
+    });
+
     socket.on('hazard:new', (newReport) => {
       setHazardReports((prev) => [newReport, ...prev.filter((r) => r.id !== newReport.id)]);
     });
@@ -187,6 +191,7 @@ export default function VolunteerDashboard() {
       socket.off('sos:created');
       socket.off('sos:status_changed');
       socket.off('alert:new');
+      socket.off('alert:deactivated');
       socket.off('hazard:new');
       socket.off('hazard:confirmed');
       socket.off('hazard:tier_changed');

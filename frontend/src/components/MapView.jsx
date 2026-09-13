@@ -200,7 +200,7 @@ export default function MapView({
   }, [focusCoords, userCoords, alerts, shelters]);
 
   const allIncidents = React.useMemo(() => {
-    return [...alerts, ...sosRequests, ...shelters, ...hazardReports];
+    return [...alerts.filter((a) => a.active !== false), ...sosRequests, ...shelters, ...hazardReports];
   }, [alerts, sosRequests, shelters, hazardReports]);
 
   const handleRegionJump = (key) => {
@@ -282,7 +282,7 @@ export default function MapView({
         )}
 
         {/* Active Hazard Radii & Circles (Leaflet circle radius = radiusKm * 1000 meters) */}
-        {alerts.map((alert) => {
+        {alerts.filter((alert) => alert.active !== false).map((alert) => {
           const isCritical = alert.severity === 'CRITICAL';
           const color = isCritical ? '#B23A2E' : '#C97A2B';
           const radiusKm = alert.radiusKm !== undefined && alert.radiusKm !== null ? Number(alert.radiusKm) : 5.0;

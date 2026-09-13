@@ -1,5 +1,5 @@
 const prisma = require('../db');
-const { broadcastAlert } = require('../sockets/socketHandler');
+const { broadcastAlert, broadcastAlertDeactivated, broadcastAlertDeleted } = require('../sockets/socketHandler');
 const { processTelemetryAndAlert, evaluateRisk } = require('../services/riskEngine.service');
 const { getWeatherData } = require('../services/weather.service');
 const { sendBroadcastSMS, normalizePhoneNumber } = require('../services/sms.service');
@@ -171,7 +171,11 @@ async function fanOutPublicAlerts(alert, explicitPhones = []) {
 async function getAlerts(req, res) {
   try {
     const { activeOnly } = req.query;
-    const where = activeOnly === 'false' ? {} : { active: true };
+    // Always exclude soft-deleted records from all views
+    const where =
+      activeOnly === 'false'
+        ? { deletedAt: null }
+        : { active: true, deletedAt: null };
     const alerts = await prisma.alert.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -265,10 +269,65 @@ async function deactivateAlert(req, res) {
       where: { id: parseInt(id) },
       data: { active: false },
     });
+    broadcastAlertDeactivated(alert);
     res.status(200).json({ message: 'Alert deactivated', alert });
   } catch (error) {
     console.error('Error deactivating alert:', error);
     res.status(500).json({ error: 'Failed to deactivate alert' });
+  }
+}
+
+async function deleteAlert(req, res) {
+  try {
+    const { id } = req.params;
+    const alertId = parseInt(id);
+
+    // Verify exists and is not already deleted
+    const existing = await prisma.alert.findFirst({
+      where: { id: alertId, deletedAt: null },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Alert not found' });
+    }
+
+    // Block deletion of still-active broadcasts — must deactivate first
+    if (existing.active) {
+      return res.status(409).json({
+        error:
+          'Cannot delete an active broadcast. Deactivate the alert first, then delete it.',
+      });
+    }
+
+    // Soft-delete: stamp deletedAt, preserve row for audit trail
+    const deleted = await prisma.alert.update({
+      where: { id: alertId },
+      data: { deletedAt: new Date() },
+    });
+
+    broadcastAlertDeleted({ id: alertId });
+    res.status(200).json({ message: 'Alert deleted (soft)', alertId });
+  } catch (error) {
+    console.error('Error deleting alert:', error);
+    res.status(500).json({ error: 'Failed to delete alert' });
+  }
+}
+
+async function bulkDeleteResolved(req, res) {
+  try {
+    // Soft-delete all deactivated (active=false), not yet deleted rows
+    const result = await prisma.alert.updateMany({
+      where: { active: false, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+
+    broadcastAlertDeleted({ bulk: true, count: result.count });
+    res.status(200).json({
+      message: `${result.count} resolved alert(s) cleared from log`,
+      count: result.count,
+    });
+  } catch (error) {
+    console.error('Error bulk-deleting resolved alerts:', error);
+    res.status(500).json({ error: 'Failed to bulk-delete resolved alerts' });
   }
 }
 
@@ -277,5 +336,7 @@ module.exports = {
   createAlert,
   simulateWeatherAlert,
   deactivateAlert,
+  deleteAlert,
+  bulkDeleteResolved,
   fanOutPublicAlerts, // exported for testing
 };
