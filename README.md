@@ -22,8 +22,8 @@ The platform provides a unified situational awareness console connecting **citiz
      +------------+------------+--------------------+
      |                         |                    |
      v                         v                    v
-[ PostgreSQL / Prisma ]  [ Weather API / ]  [ Rule-Based Risk ]
-[ Relational State DB ]  [ OpenWeatherMap ] [ AI/IoT Engine   ]
+[ SQLite / Prisma     ]  [ Weather API / ]  [ Rule-Based Risk ]
+[ Relational State DB ]  [ OpenWeatherMap ] [ Threshold Engine]
 ```
 
 ---
@@ -59,6 +59,7 @@ Built strictly adhering to emergency-response UX principles (`design.md`):
 - Situational metrics: Active Hazard Count, Pending SOS Calls, Available Shelter Capacity.
 - **Broadcast Official Alert** tool: Pushes urgent alerts with hazard radii to all connected devices.
 - **AI / IoT Risk Simulator**: Drives the rule-based risk engine on weather and environmental telemetry to demonstrate automated disaster early-warning.
+  > The platform uses a deterministic, threshold-based risk engine (`riskEngine.service.js`) that evaluates current sensor/telemetry values against defined thresholds (e.g. rainfall > 60mm/h triggers a flood risk flag). This is an explainable rules engine, not a multi-tier cascading-consequence prediction model — we chose transparency and auditability over an unproven predictive claim.
 
 ---
 
@@ -66,25 +67,31 @@ Built strictly adhering to emergency-response UX principles (`design.md`):
 
 Judges often probe how a software platform satisfies the "AI/IoT-powered" requirement when physical hardware is not present at the booth:
 
-### Talking Point for Judging:
-> *"Our telemetry ingestion pipeline is built with a plug-and-play architecture. In production, physical field hardware (LoRaWAN flood river-gauge sensors, seismic accelerometers, and thermal drone cameras) transmit JSON packets to our `/api/alerts/simulate` endpoint. For today's demonstration, our gateway simulator generates identical real-time telemetry packets (e.g., rainfall rate in mm/h, wind gust speed, and smoke index). The risk evaluation engine processes thresholds and dispatches warnings identically, proving full end-to-end readiness for hardware integration without hardware fragility during the presentation."*
+### Telemetry Ingestion & Architecture:
+> "The platform accepts telemetry data (rainfall, water level, seismic readings) via a JSON HTTP endpoint (`/api/alerts/simulate`), designed to be compatible with real sensor gateways in a production deployment. No physical LoRaWAN hardware or network server integration is included in this submission — telemetry is currently simulated/demo data unless a real `OPENWEATHER_API_KEY` is configured, in which case live weather data is used."
 
 ### Telemetry Packet Specification:
 ```json
 {
-  "region": "Kurla East - Mithi Catchment",
-  "lat": 19.0726,
-  "lng": 72.8845,
+  "region": "Chamoli - Badrinath Corridor",
+  "lat": 30.4074,
+  "lng": 79.3248,
   "telemetry": {
     "rain1h": 75.0,
     "windSpeed": 45.0,
-    "temp": 27.2,
+    "temp": 18.2,
     "humidity": 95,
     "seismic": 0.0,
     "smokeIndex": 12
   }
 }
 ```
+
+---
+
+## Offline Resilience & Field Relay Architecture
+
+> "Offline resilience is implemented via a local-hub relay architecture: devices connect to a local network hub (no internet uplink required), and a Service Worker + IndexedDB queue on each device persists actions taken while disconnected, auto-syncing once connectivity to the hub or internet is restored. This is a hub-and-spoke local relay, not a peer-to-peer Bluetooth/Wi-Fi Direct mesh network — true ad-hoc mesh relay would require native mobile code beyond this web platform's scope."
 
 ---
 

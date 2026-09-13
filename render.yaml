@@ -5,11 +5,25 @@ services:
     rootDir: backend
     buildCommand: npm install && npm run build
     startCommand: npm start
+    # NOTE ON DATABASE PERSISTENCE:
+    # SQLite requires a persistent disk volume on Render (supported on Starter/Standard tiers).
+    # Mounting the database to /var/data ensures shelters, alerts, SOS requests, and users
+    # persist across manual restarts, redeployments, and container restarts.
+    #
+    # LIMITATION ON FREE TIER:
+    # Render's free tier does not support persistent disks (ephemeral filesystem only).
+    # If running on the free tier without a disk, database state resets upon service sleep/restart.
+    # In that environment, run 'node backend/scripts/seed-uttarakhand-demo.js' to re-populate demo data,
+    # or point DATABASE_URL to a managed PostgreSQL instance and update schema.prisma accordingly.
+    disk:
+      name: sih-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        value: file:./dev.db
+        value: file:/var/data/dev.db
       - key: JWT_SECRET
         value: 0f62d848616b64ca89624e004c7266f6f152f2940eaa280842fddc6b8220c221
       - key: CORS_ORIGIN

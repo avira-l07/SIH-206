@@ -145,6 +145,8 @@ function MapBoundsController({ triggerFit, incidents = [] }) {
 }
 
 const REGION_COORDINATES = {
+  uttarakhand: [30.3165, 78.0322],
+  chamoli: [30.4074, 79.3248],
   mumbai: [19.0760, 72.8777],
   delhi: [28.6139, 77.2090],
   chennai: [13.0827, 80.2707],
@@ -182,7 +184,7 @@ export default function MapView({
     };
   }, []);
 
-  // Dynamic initial center: focusCoords -> userCoords -> first active alert/shelter -> national fallback
+  // Dynamic initial center: focusCoords -> userCoords -> first active alert/shelter -> national fallback [20.5937, 78.9629]
   const defaultCenter = React.useMemo(() => {
     if (focusCoords && focusCoords[0] && focusCoords[1]) {
       return focusCoords;
@@ -196,7 +198,7 @@ export default function MapView({
     if (shelters.length > 0 && typeof shelters[0].lat === 'number') {
       return [shelters[0].lat, shelters[0].lng];
     }
-    return [19.0760, 72.8777]; // Default fallback if no data
+    return [20.5937, 78.9629]; // Geographic center of India (national fallback if no incidents/user location)
   }, [focusCoords, userCoords, alerts, shelters]);
 
   const allIncidents = React.useMemo(() => {
@@ -214,10 +216,33 @@ export default function MapView({
     setFitTrigger((prev) => prev + 1);
   };
 
+  const handleLocateMe = () => {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setActiveCenter([pos.coords.latitude, pos.coords.longitude]);
+        },
+        (err) => alert('Could not retrieve GPS location: ' + err.message),
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    } else {
+      alert('Geolocation is not supported by your browser.');
+    }
+  };
+
   return (
     <div className="w-full h-full min-h-[420px] rounded border border-[#D8D3C7] overflow-hidden relative shadow-xs isolate">
-      {/* Tactical Map Toolbar (Region Jump & Fit All Incidents) */}
+      {/* Tactical Map Toolbar (Region Jump, Fit All Incidents & Live GPS) */}
       <div className="absolute top-2 right-2 z-[450] flex flex-wrap items-center gap-1.5 bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded p-1.5 shadow-md font-mono text-xs">
+        <button
+          type="button"
+          onClick={handleLocateMe}
+          className="px-2.5 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F] border border-[#D8D3C7] rounded text-[11px] font-bold flex items-center gap-1 transition-transform active:scale-95"
+          title="Recenter to my live browser GPS position"
+        >
+          <span>📍 MY GPS LOCATION</span>
+        </button>
+
         <button
           type="button"
           onClick={handleFitAll}
@@ -235,6 +260,8 @@ export default function MapView({
             className="bg-[#F6F4EF] border border-[#D8D3C7] rounded px-1.5 py-1 text-[11px] text-[#14231F] font-mono focus:outline-none focus:border-[#14231F]"
           >
             <option value="">Quick Region...</option>
+            <option value="uttarakhand">Uttarakhand / Dehradun</option>
+            <option value="chamoli">Chamoli / Joshimath</option>
             <option value="mumbai">Mumbai Metro</option>
             <option value="delhi">Delhi NCR</option>
             <option value="chennai">Chennai Sector</option>

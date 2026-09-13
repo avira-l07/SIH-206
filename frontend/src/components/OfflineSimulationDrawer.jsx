@@ -184,7 +184,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
           id="open-offline-sim-drawer-btn"
           onClick={() => setIsOpen(!isOpen)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-[#14231F] hover:bg-black text-[#F6F4EF] font-mono text-xs rounded border border-[#D8D3C7] shadow-md transition-colors"
-          title="Open Offline Mesh & SMS Gateway Simulator"
+          title="Open Offline Relay & SMS Gateway Simulator"
         >
           <Terminal className="w-3.5 h-3.5 text-[#2E6E4E]" />
           <span>OFFLINE & RELAY TOOLS {queuedItems.length > 0 ? `(${queuedItems.length})` : ''}</span>

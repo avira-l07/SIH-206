@@ -36,46 +36,66 @@ export default function AdminDashboard() {
   const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
   const [restockAlert, setRestockAlert] = useState(null);
 
+  const [adminCoords, setAdminCoords] = useState(null);
+
   // Broadcast Modal State
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastMode, setBroadcastMode] = useState('area'); // 'area' | 'geospatial'
   const [alertForm, setAlertForm] = useState({
-    hazardType: 'FLOOD',
+    hazardType: 'LANDSLIDE',
     severity: 'CRITICAL',
-    region: 'Kurla East - Mithi Basin',
-    lat: 19.0726,
-    lng: 72.8845,
-    radiusKm: 5.0,
-    message: 'Water levels rising rapidly (75mm/h). Immediate evacuation ordered for ground-floor residents.',
+    region: 'Chamoli - Badrinath National Highway (NH-7)',
+    lat: 30.4074,
+    lng: 79.3248,
+    radiusKm: 15.0,
+    message: 'Major landslide blocking NH-7 near Chamoli following torrential cloudburst. Severe slope instability, active debris flow. Avoid mountain corridors, evacuate valley floor.',
   });
   const [broadcastLoading, setBroadcastLoading] = useState(false);
   const [broadcastSuccess, setBroadcastSuccess] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null); // { id, label } or null
 
   // Simulation Tool State
-  const [simRegion, setSimRegion] = useState('Kurla East');
+  const [simRegion, setSimRegion] = useState('Chamoli');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState(null);
   const [registryStats, setRegistryStats] = useState({ totalPhones: 0, totalPushSubs: 0 });
 
-  // Subscriber Directory Modal State
-  const [subscribersModalOpen, setSubscribersModalOpen] = useState(false);
-  const [subscribersData, setSubscribersData] = useState({ phoneRegistrations: [], citizenUsers: [], pushSubscriptionsCount: 0 });
-  const [subscribersLoading, setSubscribersLoading] = useState(false);
-  const [subscriberSearch, setSubscriberSearch] = useState('');
-  const [subscriberTab, setSubscriberTab] = useState('phones');
+  // Dedicated Area Public Broadcast State (Decision 0.3)
+  const [areaBroadcastRegion, setAreaBroadcastRegion] = useState('All Regions (National/Statewide)');
+  const [areaBroadcastMessage, setAreaBroadcastMessage] = useState('');
+  const [areaBroadcastLoading, setAreaBroadcastLoading] = useState(false);
+  const [areaBroadcastResult, setAreaBroadcastResult] = useState(null);
 
-  const openSubscribersModal = async () => {
-    setSubscribersModalOpen(true);
-    setSubscribersLoading(true);
+  const handleSendAreaBroadcast = async (e) => {
+    if (e) e.preventDefault();
+    if (!areaBroadcastMessage.trim()) return;
+
+    setAreaBroadcastLoading(true);
+    setAreaBroadcastResult(null);
+
     try {
-      const res = await api.get('/registry/subscribers');
-      if (res.data?.success) {
-        setSubscribersData(res.data);
-      }
+      await api.post('/alerts', {
+        region: areaBroadcastRegion,
+        message: areaBroadcastMessage.trim(),
+        hazardType: 'ADVISORY',
+        severity: 'WARNING',
+        radiusKm: 25.0,
+      });
+
+      setAreaBroadcastResult({
+        success: true,
+        message: `Public alert dispatched to registered phones (SMS) and push subscribers in ${areaBroadcastRegion}!`,
+      });
+      setAreaBroadcastMessage('');
+      fetchConsoleData();
     } catch (err) {
-      console.error('Failed to load registered subscribers:', err);
+      console.error('Failed to send area broadcast:', err);
+      setAreaBroadcastResult({
+        success: false,
+        message: err.response?.data?.error || 'Failed to dispatch area broadcast',
+      });
     } finally {
-      setSubscribersLoading(false);
+      setAreaBroadcastLoading(false);
     }
   };
 
@@ -100,6 +120,16 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchConsoleData();
+
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setAdminCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
   }, []);
 
   // Socket.io sync
@@ -417,14 +447,33 @@ export default function AdminDashboard() {
               </button>
             </div>
 
-            <button
-              id="open-broadcast-modal-btn"
-              onClick={() => setBroadcastOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-[#B23A2E] hover:bg-[#992c21] text-white font-display font-bold text-xs rounded transition-colors"
-            >
-              <Radio className="w-4 h-4" />
-              <span>BROADCAST OFFICIAL ALERT</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                id="open-area-broadcast-btn"
+                onClick={() => {
+                  setBroadcastMode('area');
+                  setBroadcastOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-[#14231F] hover:bg-[#1f3731] text-white font-display font-bold text-xs rounded transition-colors shadow-xs"
+                title="Direct regional broadcast to registered phones & push devices"
+              >
+                <Radio className="w-3.5 h-3.5 text-[#4ADE80]" />
+                <span>SEND PUBLIC ALERT TO AREA</span>
+              </button>
+
+              <button
+                id="open-broadcast-modal-btn"
+                onClick={() => {
+                  setBroadcastMode('geospatial');
+                  setBroadcastOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-[#B23A2E] hover:bg-[#992c21] text-white font-display font-bold text-xs rounded transition-colors"
+                title="Transmit geospatial hazard broadcast with radius"
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>OFFICIAL BROADCAST</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -646,6 +695,7 @@ export default function AdminDashboard() {
                   sosRequests={sosList}
                   shelters={shelters}
                   hazardReports={hazardReports}
+                  userCoords={adminCoords}
                   focusCoords={focusCoords}
                   onConfirmHazard={handleConfirmHazard}
                   onViewSupplies={(s) => setViewingSuppliesShelter(s)}
@@ -682,6 +732,8 @@ export default function AdminDashboard() {
                       onChange={(e) => setSimRegion(e.target.value)}
                       className="w-full p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs font-mono"
                     >
+                      <option value="Chamoli">Chamoli Landslide Corridor (Torrential Downpour / Landslide: 85mm/h)</option>
+                      <option value="Dehradun">Dehradun Doon Valley (Continuous Downpour: 65mm/h)</option>
                       <option value="Kurla East">Kurla East (Torrential Flood Scenario: 75mm/h)</option>
                       <option value="Mumbai">Mumbai Regional (Heavy Rain Advisory: 42mm/h)</option>
                       <option value="Bandra">Bandra West (Moderate Baseline: 18mm/h)</option>
@@ -1013,7 +1065,7 @@ export default function AdminDashboard() {
               <div className="flex items-center gap-2 text-[#B23A2E]">
                 <Radio className="w-5 h-5" />
                 <h2 className="font-display font-bold text-lg uppercase tracking-tight">
-                  Broadcast Disaster Alert
+                  {broadcastMode === 'area' ? 'Send Public Alert to Area' : 'Geospatial Incident Broadcast'}
                 </h2>
               </div>
               <button
@@ -1024,28 +1076,47 @@ export default function AdminDashboard() {
               </button>
             </div>
 
-            {/* Public Reach Multi-Channel Telemetry */}
+            {/* Mode Switcher Tabs */}
+            <div className="flex items-center gap-2 mt-3 border-b border-[#D8D3C7] pb-2 text-xs font-mono">
+              <button
+                type="button"
+                id="tab-area-broadcast"
+                onClick={() => setBroadcastMode('area')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded transition-colors ${
+                  broadcastMode === 'area'
+                    ? 'bg-[#14231F] text-white font-bold'
+                    : 'bg-[#FAF8F5] text-[#14231F]/70 hover:bg-[#EFECE4]'
+                }`}
+              >
+                <Radio className="w-3.5 h-3.5 text-[#4ADE80]" />
+                <span>Send Public Alert to Area</span>
+              </button>
+              <button
+                type="button"
+                id="tab-geospatial-broadcast"
+                onClick={() => setBroadcastMode('geospatial')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded transition-colors ${
+                  broadcastMode === 'geospatial'
+                    ? 'bg-[#B23A2E] text-white font-bold'
+                    : 'bg-[#FAF8F5] text-[#14231F]/70 hover:bg-[#EFECE4]'
+                }`}
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>Geospatial Incident Broadcast</span>
+              </button>
+            </div>
+
+            {/* Public Reach Multi-Channel Telemetry (Aggregate Only — Strict Privacy) */}
             <div className="mt-3 p-2.5 bg-[#14231F] text-[#F6F4EF] rounded space-y-1.5 font-mono">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-white/70 uppercase">Target Audience:</span>
                 <span className="text-[#4ADE80] font-bold text-[10px]">3 DELIVERY CHANNELS ARMED</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                <button
-                  type="button"
-                  onClick={openSubscribersModal}
-                  className="bg-white/10 hover:bg-white/20 transition-all p-1.5 rounded cursor-pointer text-center group border border-transparent hover:border-[#E5A93C]/40"
-                  title="Click to view all registered phone numbers"
-                >
-                  <div className="flex items-center justify-center gap-1">
-                    <span className="text-sm font-bold text-[#E5A93C] group-hover:scale-105 transition-transform">
-                      {registryStats.totalPhones}
-                    </span>
-                    <span className="text-[9px] text-[#E5A93C] opacity-75 group-hover:opacity-100">👁️</span>
-                  </div>
-                  <div className="text-[10px] text-white/70 group-hover:text-white">Phones via SMS</div>
-                  <div className="text-[8px] text-[#E5A93C]/80 mt-0.5 font-mono">View List →</div>
-                </button>
+                <div className="bg-white/10 p-1.5 rounded flex flex-col justify-center">
+                  <div className="text-sm font-bold text-[#E5A93C]">{registryStats.totalPhones}</div>
+                  <div className="text-[10px] text-white/70">Phones via SMS</div>
+                </div>
                 <div className="bg-white/10 p-1.5 rounded flex flex-col justify-center">
                   <div className="text-sm font-bold text-[#4ADE80]">{registryStats.totalPushSubs}</div>
                   <div className="text-[10px] text-white/70">Web Push Subscribers</div>
@@ -1056,154 +1127,260 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <form onSubmit={handleBroadcastAlert} className="mt-4 space-y-3.5">
-              <div className="grid grid-cols-2 gap-3">
+            {broadcastMode === 'area' ? (
+              /* DEDICATED STREAMLINED AREA BROADCAST (DECISION 0.3) */
+              <form onSubmit={handleSendAreaBroadcast} className="mt-4 space-y-3.5">
                 <div>
-                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
-                    Hazard Type
+                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1 font-bold">
+                    Target Alert Region / Zone
                   </label>
                   <select
-                    value={alertForm.hazardType}
-                    onChange={(e) => setAlertForm({ ...alertForm, hazardType: e.target.value })}
-                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
+                    id="area-broadcast-region-select"
+                    value={areaBroadcastRegion}
+                    onChange={(e) => setAreaBroadcastRegion(e.target.value)}
+                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono focus:outline-none focus:border-[#14231F]"
                   >
-                    <option value="FLOOD">FLOOD</option>
-                    <option value="EARTHQUAKE">EARTHQUAKE</option>
-                    <option value="FIRE">FIRE</option>
+                    <option value="All Regions (National/Statewide)">All Regions (National / Statewide)</option>
+                    <option value="Chamoli - Badrinath Corridor">Chamoli - Badrinath Corridor</option>
+                    <option value="Dehradun - Doon Valley Catchment">Dehradun - Doon Valley Catchment</option>
+                    <option value="Rishikesh - Ganga Basin">Rishikesh - Ganga Basin</option>
+                    <option value="Haridwar - Silt & Flood Zone">Haridwar - Silt & Flood Zone</option>
+                    <option value="Joshimath - Mountain Refuge">Joshimath - Mountain Refuge</option>
+                    <option value="Rudraprayag - Valley Confluence">Rudraprayag - Valley Confluence</option>
                   </select>
+                  <p className="text-[10px] text-[#14231F]/60 mt-1 font-mono">
+                    Fans out SMS + Web Push to all phones & devices registered for this area (or nationwide).
+                  </p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
-                    Severity Tier
-                  </label>
-                  <select
-                    value={alertForm.severity}
-                    onChange={(e) => setAlertForm({ ...alertForm, severity: e.target.value })}
-                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
-                  >
-                    <option value="CRITICAL">CRITICAL (Direct Emergency)</option>
-                    <option value="WATCH">WATCH (Advisory Warning)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
-                  Region / Sector Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={alertForm.region}
-                  onChange={(e) => setAlertForm({ ...alertForm, region: e.target.value })}
-                  className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
-                    Center Latitude
-                  </label>
-                  <input
-                    type="number"
-                    step="0.0001"
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-mono uppercase text-[#14231F]/80 font-bold">
+                      Public Advisory Message
+                    </label>
+                    <span className="text-[10px] font-mono text-[#14231F]/60">
+                      {areaBroadcastMessage.length} chars
+                    </span>
+                  </div>
+                  <textarea
+                    id="area-broadcast-message-input"
+                    rows={3}
                     required
-                    value={alertForm.lat}
-                    onChange={(e) => setAlertForm({ ...alertForm, lat: e.target.value })}
-                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
+                    placeholder="Enter urgent safety instructions (e.g., Flash flood warning: Avoid riverbanks and low bridges...)"
+                    value={areaBroadcastMessage}
+                    onChange={(e) => setAreaBroadcastMessage(e.target.value)}
+                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F] font-mono"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
-                    Center Longitude
-                  </label>
-                  <input
-                    type="number"
-                    step="0.0001"
-                    required
-                    value={alertForm.lng}
-                    onChange={(e) => setAlertForm({ ...alertForm, lng: e.target.value })}
-                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
-                  />
-                </div>
-              </div>
 
-              {/* Radius Selector (Issue 3 / Spec) */}
-              <div className="p-3 bg-[#FAF8F5] border border-[#D8D3C7] rounded space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-mono uppercase text-[#14231F] font-bold">
-                    Emergency Coverage Radius
-                  </label>
-                  <span className="text-xs font-mono font-bold text-[#B23A2E]">
-                    {alertForm.radiusKm} km radius
-                  </span>
+                {/* Quick Presets for Rapid Response */}
+                <div className="space-y-1">
+                  <div className="text-[10px] font-mono uppercase text-[#14231F]/60">Quick Advisory Presets:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { label: '🌊 Flash Flood', text: 'Flash Flood Advisory: Rising river levels observed. Avoid riverbanks, ghats, and low bridges immediately.' },
+                      { label: '⛰️ Landslide Roadblock', text: 'Landslide Warning: Heavy debris flow on mountain corridor. Avoid travel and stay clear of unstable slopes.' },
+                      { label: '🌧️ Cloudburst Warning', text: 'Severe Cloudburst Warning: Intense localized downpour expected. Relocate to reinforced elevated shelter.' }
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => setAreaBroadcastMessage(preset.text)}
+                        className="text-[10px] font-mono px-2 py-1 bg-[#FAF8F5] hover:bg-[#EFECE4] border border-[#D8D3C7] rounded text-[#14231F] transition-colors"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {[2, 5, 10, 25, 50].map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => setAlertForm({ ...alertForm, radiusKm: preset })}
-                      className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
-                        Number(alertForm.radiusKm) === preset
-                          ? 'bg-[#14231F] text-white border-[#14231F] font-bold shadow-xs'
-                          : 'bg-white text-[#14231F] border-[#D8D3C7] hover:bg-[#EFECE4]'
-                      }`}
+                {areaBroadcastResult && (
+                  <div
+                    className={`p-2.5 rounded text-xs font-mono ${
+                      areaBroadcastResult.success
+                        ? 'bg-[#EBF7EE] text-[#1E6B37] border border-[#A3D9B1]'
+                        : 'bg-[#FDF2F0] text-[#B23A2E] border border-[#F0A8A0]'
+                    }`}
+                  >
+                    {areaBroadcastResult.message}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#D8D3C7]">
+                  <button
+                    type="button"
+                    onClick={() => setBroadcastOpen(false)}
+                    className="px-4 py-2 text-xs font-medium text-[#14231F]/70"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    id="submit-area-broadcast-btn"
+                    disabled={areaBroadcastLoading || !areaBroadcastMessage.trim()}
+                    className="flex items-center gap-2 px-4 py-2 bg-[#14231F] hover:bg-[#1f3731] text-white font-display font-bold text-xs rounded transition-colors disabled:opacity-50"
+                  >
+                    {areaBroadcastLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Radio className="w-3.5 h-3.5 text-[#4ADE80]" />
+                    )}
+                    <span>DISPATCH PUBLIC ALERT TO AREA</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* GEOSPATIAL INCIDENT BROADCAST FORM */
+              <form onSubmit={handleBroadcastAlert} className="mt-4 space-y-3.5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
+                      Hazard Type
+                    </label>
+                    <select
+                      value={alertForm.hazardType}
+                      onChange={(e) => setAlertForm({ ...alertForm, hazardType: e.target.value })}
+                      className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                     >
-                      {preset} km
-                    </button>
-                  ))}
+                      <option value="LANDSLIDE">LANDSLIDE</option>
+                      <option value="FLOOD">FLOOD</option>
+                      <option value="EARTHQUAKE">EARTHQUAKE</option>
+                      <option value="FIRE">FIRE</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
+                      Severity Tier
+                    </label>
+                    <select
+                      value={alertForm.severity}
+                      onChange={(e) => setAlertForm({ ...alertForm, severity: e.target.value })}
+                      className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
+                    >
+                      <option value="CRITICAL">CRITICAL (Direct Emergency)</option>
+                      <option value="WATCH">WATCH (Advisory Warning)</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-xs font-mono text-[#14231F]/70">Custom radius:</span>
+                <div>
+                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
+                    Region / Sector Name
+                  </label>
                   <input
-                    type="number"
-                    step="0.5"
-                    min="0.5"
-                    max="500"
-                    value={alertForm.radiusKm}
-                    onChange={(e) => setAlertForm({ ...alertForm, radiusKm: e.target.value })}
-                    className="w-24 p-1.5 bg-white border border-[#D8D3C7] rounded text-xs font-mono focus:outline-none focus:border-[#14231F]"
+                    type="text"
+                    required
+                    value={alertForm.region}
+                    onChange={(e) => setAlertForm({ ...alertForm, region: e.target.value })}
+                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                   />
-                  <span className="text-xs font-mono text-[#14231F]/70">km (kilometers)</span>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
-                  Public Advisory Message
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  value={alertForm.message}
-                  onChange={(e) => setAlertForm({ ...alertForm, message: e.target.value })}
-                  className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
-                />
-              </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
+                      Center Latitude
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      required
+                      value={alertForm.lat}
+                      onChange={(e) => setAlertForm({ ...alertForm, lat: e.target.value })}
+                      className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
+                      Center Longitude
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      required
+                      value={alertForm.lng}
+                      onChange={(e) => setAlertForm({ ...alertForm, lng: e.target.value })}
+                      className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
+                    />
+                  </div>
+                </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#D8D3C7]">
-                <button
-                  type="button"
-                  onClick={() => setBroadcastOpen(false)}
-                  className="px-4 py-2 text-xs font-medium text-[#14231F]/70"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={broadcastLoading}
-                  className="flex items-center gap-2 px-4 py-2 bg-[#B23A2E] hover:bg-[#992c21] text-white font-display font-bold text-xs rounded transition-colors disabled:opacity-50"
-                >
-                  {broadcastLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Radio className="w-3.5 h-3.5" />}
-                  <span>TRANSMIT OFFICIAL BROADCAST</span>
-                </button>
-              </div>
-            </form>
+                {/* Radius Selector */}
+                <div className="p-3 bg-[#FAF8F5] border border-[#D8D3C7] rounded space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-mono uppercase text-[#14231F] font-bold">
+                      Emergency Coverage Radius
+                    </label>
+                    <span className="text-xs font-mono font-bold text-[#B23A2E]">
+                      {alertForm.radiusKm} km radius
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[2, 5, 10, 25, 50].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setAlertForm({ ...alertForm, radiusKm: preset })}
+                        className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
+                          Number(alertForm.radiusKm) === preset
+                            ? 'bg-[#14231F] text-white border-[#14231F] font-bold shadow-xs'
+                            : 'bg-white text-[#14231F] border-[#D8D3C7] hover:bg-[#EFECE4]'
+                        }`}
+                      >
+                        {preset} km
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-xs font-mono text-[#14231F]/70">Custom radius:</span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      max="500"
+                      value={alertForm.radiusKm}
+                      onChange={(e) => setAlertForm({ ...alertForm, radiusKm: e.target.value })}
+                      className="w-24 p-1.5 bg-white border border-[#D8D3C7] rounded text-xs font-mono focus:outline-none focus:border-[#14231F]"
+                    />
+                    <span className="text-xs font-mono text-[#14231F]/70">km (kilometers)</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
+                    Public Advisory Message
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={alertForm.message}
+                    onChange={(e) => setAlertForm({ ...alertForm, message: e.target.value })}
+                    className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#D8D3C7]">
+                  <button
+                    type="button"
+                    onClick={() => setBroadcastOpen(false)}
+                    className="px-4 py-2 text-xs font-medium text-[#14231F]/70"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={broadcastLoading}
+                    className="flex items-center gap-2 px-4 py-2 bg-[#B23A2E] hover:bg-[#992c21] text-white font-display font-bold text-xs rounded transition-colors disabled:opacity-50"
+                  >
+                    {broadcastLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Radio className="w-3.5 h-3.5" />}
+                    <span>TRANSMIT OFFICIAL BROADCAST</span>
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -1217,207 +1394,6 @@ export default function AdminDashboard() {
         onClose={() => setViewingSuppliesShelter(null)}
         shelter={viewingSuppliesShelter}
       />
-
-      {/* Registered Phone Numbers & Subscribers Modal */}
-      {subscribersModalOpen && (
-        <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded-lg shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in duration-200">
-            {/* Header */}
-            <div className="bg-[#14231F] text-[#F6F4EF] px-5 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-[#E5A93C]/20 text-[#E5A93C] rounded">
-                  <Phone className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="font-display font-bold text-sm tracking-wide">
-                    REGISTERED SUBSCRIBERS & CITIZEN DIRECTORY
-                  </h2>
-                  <p className="text-[11px] text-white/60 font-mono">
-                    Emergency Alert Dispatch Recipient Registry
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setSubscribersModalOpen(false)}
-                className="text-white/60 hover:text-white p-1 rounded transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Info notice about SMS reception */}
-            <div className="bg-[#FAF8F5] border-b border-[#D8D3C7] px-5 py-2.5 text-xs text-[#14231F]/80 flex items-start gap-2">
-              <span className="text-[#E5A93C] text-sm leading-none mt-0.5">ℹ️</span>
-              <p className="text-[11px] leading-relaxed">
-                <strong>Where are SMS received?</strong> Broadcasts sent to these numbers go via <strong>Twilio</strong> to recipient mobile phones (when credentials are in <code>.env</code>) or appear in the <strong>backend server console logs</strong> in simulated/dev mode.
-              </p>
-            </div>
-
-            {/* Tabs & Search */}
-            <div className="p-4 border-b border-[#D8D3C7] bg-[#F6F4EF]/50 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="flex items-center gap-1 bg-[#D8D3C7]/40 p-1 rounded-md w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setSubscriberTab('phones')}
-                  className={`px-3 py-1.5 rounded text-xs font-mono font-bold transition-all ${
-                    subscriberTab === 'phones'
-                      ? 'bg-[#14231F] text-white shadow-sm'
-                      : 'text-[#14231F]/70 hover:text-[#14231F]'
-                  }`}
-                >
-                  Public SMS Subscriptions ({subscribersData.phoneRegistrations?.length || 0})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSubscriberTab('citizens')}
-                  className={`px-3 py-1.5 rounded text-xs font-mono font-bold transition-all ${
-                    subscriberTab === 'citizens'
-                      ? 'bg-[#14231F] text-white shadow-sm'
-                      : 'text-[#14231F]/70 hover:text-[#14231F]'
-                  }`}
-                >
-                  Citizen Accounts ({subscribersData.citizenUsers?.length || 0})
-                </button>
-              </div>
-
-              <div className="relative w-full sm:w-64">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[#14231F]/40" />
-                <input
-                  type="text"
-                  placeholder="Filter by phone, name, region..."
-                  value={subscriberSearch}
-                  onChange={(e) => setSubscriberSearch(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 bg-white border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
-                />
-              </div>
-            </div>
-
-            {/* List Body */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {subscribersLoading ? (
-                <div className="py-12 flex flex-col items-center justify-center text-[#14231F]/50 gap-2">
-                  <Loader2 className="w-6 h-6 animate-spin text-[#14231F]" />
-                  <span className="text-xs font-mono">Loading registered subscriber records...</span>
-                </div>
-              ) : subscriberTab === 'phones' ? (
-                // Public SMS Phone Registrations
-                subscribersData.phoneRegistrations?.filter((r) => {
-                  const q = subscriberSearch.toLowerCase();
-                  return (
-                    r.phoneNumber?.toLowerCase().includes(q) ||
-                    (r.region && r.region.toLowerCase().includes(q))
-                  );
-                }).length === 0 ? (
-                  <div className="py-12 text-center text-xs text-[#14231F]/60 font-mono">
-                    No phone registrations match "{subscriberSearch}"
-                  </div>
-                ) : (
-                  <div className="divide-y divide-[#D8D3C7] border border-[#D8D3C7] rounded-md overflow-hidden bg-white">
-                    <div className="grid grid-cols-12 bg-[#FAF8F5] px-3 py-2 text-[10px] font-mono text-[#14231F]/70 uppercase font-bold border-b border-[#D8D3C7]">
-                      <span className="col-span-5">Phone Number</span>
-                      <span className="col-span-4">Subscribed Region</span>
-                      <span className="col-span-3 text-right">Registered On</span>
-                    </div>
-                    {subscribersData.phoneRegistrations
-                      ?.filter((r) => {
-                        const q = subscriberSearch.toLowerCase();
-                        return (
-                          r.phoneNumber?.toLowerCase().includes(q) ||
-                          (r.region && r.region.toLowerCase().includes(q))
-                        );
-                      })
-                      .map((sub) => (
-                        <div
-                          key={sub.id}
-                          className="grid grid-cols-12 items-center px-3 py-2.5 text-xs hover:bg-[#FAF8F5]/80 transition-colors"
-                        >
-                          <div className="col-span-5 font-mono font-bold text-[#14231F] flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-[#4ADE80]" />
-                            {sub.phoneNumber}
-                          </div>
-                          <div className="col-span-4 font-mono text-[#14231F]/80">
-                            {sub.region ? (
-                              <span className="bg-[#14231F]/5 px-2 py-0.5 rounded text-[11px] font-bold">
-                                {sub.region}
-                              </span>
-                            ) : (
-                              <span className="text-[#14231F]/40 italic">All Regions</span>
-                            )}
-                          </div>
-                          <div className="col-span-3 text-right text-[11px] font-mono text-[#14231F]/60">
-                            {new Date(sub.createdAt).toLocaleDateString()}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )
-              ) : (
-                // Citizen Accounts
-                subscribersData.citizenUsers?.filter((u) => {
-                  const q = subscriberSearch.toLowerCase();
-                  return (
-                    u.name?.toLowerCase().includes(q) ||
-                    u.phone?.toLowerCase().includes(q) ||
-                    u.email?.toLowerCase().includes(q)
-                  );
-                }).length === 0 ? (
-                  <div className="py-12 text-center text-xs text-[#14231F]/60 font-mono">
-                    No citizen users match "{subscriberSearch}"
-                  </div>
-                ) : (
-                  <div className="divide-y divide-[#D8D3C7] border border-[#D8D3C7] rounded-md overflow-hidden bg-white">
-                    <div className="grid grid-cols-12 bg-[#FAF8F5] px-3 py-2 text-[10px] font-mono text-[#14231F]/70 uppercase font-bold border-b border-[#D8D3C7]">
-                      <span className="col-span-4">Citizen Name</span>
-                      <span className="col-span-4">Phone Number</span>
-                      <span className="col-span-4 text-right">Account Email</span>
-                    </div>
-                    {subscribersData.citizenUsers
-                      ?.filter((u) => {
-                        const q = subscriberSearch.toLowerCase();
-                        return (
-                          u.name?.toLowerCase().includes(q) ||
-                          u.phone?.toLowerCase().includes(q) ||
-                          u.email?.toLowerCase().includes(q)
-                        );
-                      })
-                      .map((cit) => (
-                        <div
-                          key={cit.id}
-                          className="grid grid-cols-12 items-center px-3 py-2.5 text-xs hover:bg-[#FAF8F5]/80 transition-colors"
-                        >
-                          <div className="col-span-4 font-semibold text-[#14231F] flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-[#3B82F6]" />
-                            {cit.name}
-                          </div>
-                          <div className="col-span-4 font-mono font-bold text-[#E5A93C]">
-                            {cit.phone || 'N/A'}
-                          </div>
-                          <div className="col-span-4 text-right text-[11px] font-mono text-[#14231F]/60 truncate">
-                            {cit.email}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="bg-[#FAF8F5] border-t border-[#D8D3C7] px-5 py-3 flex items-center justify-between">
-              <span className="text-[11px] font-mono text-[#14231F]/60">
-                Total Enrolled Recipients: {(subscribersData.phoneRegistrations?.length || 0) + (subscribersData.citizenUsers?.length || 0)}
-              </span>
-              <button
-                type="button"
-                onClick={() => setSubscribersModalOpen(false)}
-                className="px-4 py-1.5 bg-[#14231F] hover:bg-[#14231F]/90 text-white font-mono text-xs rounded transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

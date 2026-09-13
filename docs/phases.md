@@ -71,7 +71,7 @@ Deployment guide and configurations are established; this phase is verified, tes
 - [x] Seed realistic demo data (a few active alerts, SOS requests including one vulnerability-tagged, shelters, 1-2 hazard reports at each confidence tier)
 - [x] UI pass: consistent styling, loading states, error handling
 - [x] Automated test suite: `node verify-endpoints.js` validates all endpoints, models, and transition logic
-- [x] Write a 3-minute demo script (`docs/demo_script.md`): Login → Alert appears → SOS raised (show vulnerability tag jump the queue) → Hazard report confirmed live (grey→amber→red) → Shelter flips to red and reroutes → Volunteer resolves
+- [x] Write a 3-minute demo script (`docs/demo_script.md`): Login → Alert appears → SOS raised (show vulnerability tag jump the queue) → Hazard report confirmed live (grey→amber→red) → Shelter flips to red and redirects → Volunteer resolves
 - [x] Prepare 1-page problem/solution slide referencing the original SIH26206 brief, plus one slide listing deferred features (`docs/pitch_and_rubric.md`) — clearly labeled "future work"
 - [x] Check the actual SIH26206 evaluation rubric (`docs/pitch_and_rubric.md`). Prepared talking points on how real sensors/drones/IoT devices plug into the architecture.
 

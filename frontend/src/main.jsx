@@ -4,8 +4,8 @@ import './index.css'
 import App from './App.jsx'
 
 // Register Emergency PWA Service Worker with secure context validation
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
+function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
     if (window.isSecureContext) {
       navigator.serviceWorker
         .register('/sw.js')
@@ -20,7 +20,13 @@ if ('serviceWorker' in navigator) {
         '⚠️ [PWA] Service Worker requires secure context (HTTPS or localhost). On mobile phones over LAN IP, enable chrome://flags/#unsafely-treat-insecure-origin-as-secure to test offline PWA boot.'
       );
     }
-  });
+  }
+}
+
+if (document.readyState === 'complete') {
+  registerServiceWorker();
+} else {
+  window.addEventListener('load', registerServiceWorker);
 }
 
 createRoot(document.getElementById('root')).render(

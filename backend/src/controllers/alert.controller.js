@@ -37,6 +37,18 @@ function isRegionMatch(subscriberRegion, alertRegion) {
     return true;
   }
 
+  // Uttarakhand regional sub-zones mapped to state region
+  const uttarakhandSubAreas = [
+    'dehradun', 'rishikesh', 'haridwar', 'chamoli', 'rudraprayag', 'joshimath',
+    'nainital', 'kedarnath', 'badrinath', 'tehri', 'uttarkashi', 'pauri', 'garhwal', 'kumaon', 'doon'
+  ];
+  if (sub.includes('uttarakhand') && uttarakhandSubAreas.some((area) => alertStr.includes(area))) {
+    return true;
+  }
+  if (alertStr.includes('uttarakhand') && uttarakhandSubAreas.some((area) => sub.includes(area))) {
+    return true;
+  }
+
   return false;
 }
 
@@ -191,17 +203,38 @@ async function createAlert(req, res) {
   try {
     const { hazardType, severity, region, lat, lng, radiusKm, message, targetPhone, targetPhones } = req.body;
 
-    const parsedRadius = radiusKm !== undefined && radiusKm !== null ? parseFloat(radiusKm) : 5.0;
+    const parsedRadius = radiusKm !== undefined && radiusKm !== null ? parseFloat(radiusKm) : 15.0;
+
+    // Resolve sensible default coordinates based on region name if lat/lng are omitted
+    let finalLat = parseFloat(lat);
+    let finalLng = parseFloat(lng);
+    if (isNaN(finalLat) || isNaN(finalLng)) {
+      const regLower = (region || '').toLowerCase();
+      if (regLower.includes('chamoli')) {
+        finalLat = 30.4074; finalLng = 79.3248;
+      } else if (regLower.includes('rishikesh')) {
+        finalLat = 30.0869; finalLng = 78.2676;
+      } else if (regLower.includes('haridwar')) {
+        finalLat = 29.9457; finalLng = 78.1642;
+      } else if (regLower.includes('joshimath')) {
+        finalLat = 30.5562; finalLng = 79.5676;
+      } else if (regLower.includes('rudraprayag')) {
+        finalLat = 30.2844; finalLng = 78.9811;
+      } else {
+        // Default to Dehradun / Central Uttarakhand operations center
+        finalLat = 30.3165; finalLng = 78.0322;
+      }
+    }
 
     const alert = await prisma.alert.create({
       data: {
-        hazardType,
-        severity,
-        region,
-        lat: parseFloat(lat),
-        lng: parseFloat(lng),
-        radiusKm: isNaN(parsedRadius) ? 5.0 : parsedRadius,
-        message,
+        hazardType: hazardType || 'ADVISORY',
+        severity: severity || 'WARNING',
+        region: region || 'All Regions (National/Statewide)',
+        lat: finalLat,
+        lng: finalLng,
+        radiusKm: isNaN(parsedRadius) ? 15.0 : parsedRadius,
+        message: message || 'Urgent public safety notice. Follow civil defense instructions.',
         active: true,
       },
     });

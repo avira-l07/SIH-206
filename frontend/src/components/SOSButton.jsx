@@ -16,7 +16,7 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
   const [hazardType, setHazardType] = useState('FLOOD');
   const [vulnerabilityTags, setVulnerabilityTags] = useState([]);
   const [message, setMessage] = useState('');
-  const [coords, setCoords] = useState(defaultCoords || { lat: 19.0760, lng: 72.8777 });
+  const [coords, setCoords] = useState(defaultCoords || { lat: 20.5937, lng: 78.9629 });
   const [accuracy, setAccuracy] = useState(null);
   const [locating, setLocating] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -282,8 +282,8 @@ export default function SOSButton({ onSOSCreated, defaultCoords }) {
                   <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1.5">
                     Select Hazard Type *
                   </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['FLOOD', 'EARTHQUAKE', 'FIRE'].map((type) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {['FLOOD', 'LANDSLIDE', 'EARTHQUAKE', 'FIRE'].map((type) => (
                       <button
                         key={type}
                         type="button"

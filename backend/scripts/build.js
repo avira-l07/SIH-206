@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
-process.env.DATABASE_URL = 'file:./dev.db';
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'file:./dev.db';
 
 console.log('?? Running SIH26206 backend cloud build with SQLite datasource...');
 console.log('Using DATABASE_URL:', process.env.DATABASE_URL);

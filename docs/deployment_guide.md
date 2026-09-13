@@ -40,19 +40,21 @@ git push -u origin main
    - **Start Command:** `node src/server.js`
    - **Plan:** Free
 4. Add **Environment Variables** under the Environment tab:
-   - `DATABASE_URL`: *(Your Neon PostgreSQL connection string from Step 1)*
+   - `DATABASE_URL`: *(Your Neon PostgreSQL connection string from Step 1, or `file:/var/data/dev.db` if using Render Persistent Disk)*
    - `JWT_SECRET`: `sih26206-disaster-response-jwt-secret-key-2026`
    - `CORS_ORIGIN`: `*` *(or your Vercel URL)*
    - `OPENWEATHER_API_KEY`: `mock_mode_active` *(or real key)*
    - `PORT`: `5000`
+   > **Note on Data Persistence:** On Render's free tier, the filesystem is ephemeral and data resets when the instance spins down. To persist SQLite data across restarts, attach a 1GB persistent disk at `/var/data` (available on Render's paid tier), or connect a free Neon PostgreSQL database as shown in Step 1.
 5. Click **Deploy Web Service**.
 6. Note your Render URL (e.g., `https://sih26206-api.onrender.com`).
    - Test health check: `https://sih26206-api.onrender.com/api/health`
 
 ---
 
-## Step 4: Deploy Frontend to Vercel
+## Step 4: Deploy Frontend to Vercel or Netlify
 
+### Option A: Vercel
 1. Go to [https://vercel.com/new](https://vercel.com/new) -> Import your GitHub repository.
 2. Configure project:
    - **Framework Preset:** Vite
@@ -64,6 +66,18 @@ git push -u origin main
 4. Click **Deploy**.
 5. Once deployed, Vercel gives you your production link:
    `https://sih26206-disaster-management.vercel.app`
+
+### Option B: Netlify
+The repository includes a root `netlify.toml` configured for the `frontend/` workspace:
+1. Go to [https://app.netlify.com/](https://app.netlify.com/) -> **Add new site** -> **Import an existing project** -> GitHub.
+2. Select your repository. Netlify will auto-detect settings from `netlify.toml`:
+   - **Base directory:** `frontend`
+   - **Build command:** `npm run build`
+   - **Publish directory:** `dist` (resolved inside `frontend`)
+   > ⚠️ **CRITICAL:** Ensure the "Base directory" field in Netlify UI is NEVER set to `/opt/build`. `/opt/build` is an internal container path; entering it causes `Base directory does not exist: /opt/build`. Either leave "Base directory" blank in the UI (letting `netlify.toml` govern) or enter `frontend`.
+3. Under **Site configuration → Environment variables**, add:
+   - `VITE_API_URL`: `https://sih26206-api.onrender.com` *(Your Render backend URL)*
+4. Click **Deploy site**. SPA deep routing is pre-configured via `_redirects` and `netlify.toml`.
 
 ---
 

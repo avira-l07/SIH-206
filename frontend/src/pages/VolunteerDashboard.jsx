@@ -23,10 +23,12 @@ export default function VolunteerDashboard() {
   const [activeTab, setActiveTab] = useState('PENDING'); // PENDING, IN_PROGRESS, RESOLVED
   const [viewMode, setViewMode] = useState('MAP'); // 'MAP', 'KANBAN', 'STORE'
   const [focusCoords, setFocusCoords] = useState(null);
-  const [volunteerCoords, setVolunteerCoords] = useState({
-    lat: typeof user?.lat === 'number' ? user.lat : 19.0596,
-    lng: typeof user?.lng === 'number' ? user.lng : 72.8295,
-  });
+  const liveGpsAcquired = useRef(false);
+  const [volunteerCoords, setVolunteerCoords] = useState(
+    typeof user?.lat === 'number' && typeof user?.lng === 'number'
+      ? { lat: user.lat, lng: user.lng }
+      : { lat: 20.5937, lng: 78.9629 }
+  );
   const [actionLoading, setActionLoading] = useState(false);
   const [locLoading, setLocLoading] = useState(false);
   const [assetSuggestions, setAssetSuggestions] = useState({});
@@ -34,7 +36,7 @@ export default function VolunteerDashboard() {
   const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
 
   useEffect(() => {
-    if (typeof user?.lat === 'number' && typeof user?.lng === 'number') {
+    if (!liveGpsAcquired.current && typeof user?.lat === 'number' && typeof user?.lng === 'number') {
       setVolunteerCoords({ lat: user.lat, lng: user.lng });
     }
   }, [user]);
@@ -48,6 +50,7 @@ export default function VolunteerDashboard() {
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        liveGpsAcquired.current = true;
         setVolunteerCoords(coords);
         try {
           await api.patch('/auth/location', coords);
@@ -89,6 +92,7 @@ export default function VolunteerDashboard() {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          liveGpsAcquired.current = true;
           setVolunteerCoords(coords);
           api.patch('/auth/location', coords).catch(() => {});
         },

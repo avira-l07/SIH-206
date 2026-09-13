@@ -11,6 +11,10 @@ const REGION_COORDINATES = {
   'Chennai': { lat: 13.0827, lng: 80.2707 },
   'Kutch': { lat: 23.2420, lng: 69.6669 },
   'Delhi NCR': { lat: 28.6139, lng: 77.2090 },
+  'Uttarakhand': { lat: 30.3165, lng: 78.0322 },
+  'Chamoli': { lat: 30.4074, lng: 79.3248 },
+  'Dehradun': { lat: 30.3165, lng: 78.0322 },
+  'Rishikesh': { lat: 30.0869, lng: 78.2676 },
 };
 
 async function getWeatherData(region = 'Mumbai', customLat = null, customLng = null) {
@@ -56,6 +60,9 @@ async function getWeatherData(region = 'Mumbai', customLat = null, customLng = n
     'Dadar': { temp: 28.8, humidity: 90, windSpeed: 30, rain1h: 22, condition: 'Rain' },
     'Chennai': { temp: 43.2, humidity: 18, windSpeed: 28, rain1h: 0, smokeIndex: 75, condition: 'Extreme Heat & Smoke Spike' },
     'Kutch': { temp: 31.0, humidity: 45, windSpeed: 15, rain1h: 0, seismic: 6.2, condition: 'Major Seismic Event' },
+    'Chamoli': { temp: 16.5, humidity: 98, windSpeed: 52, rain1h: 85, soilMoisture: 92, landslideRisk: true, condition: 'Torrential Cloudburst & Active Landslide' },
+    'Dehradun': { temp: 22.0, humidity: 95, windSpeed: 38, rain1h: 65, condition: 'Heavy Rain & River Inundation Advisory' },
+    'Uttarakhand': { temp: 20.0, humidity: 96, windSpeed: 42, rain1h: 70, soilMoisture: 88, landslideRisk: true, condition: 'Monsoon Cloudburst / Landslide Warning' },
   };
 
   const selected = mockScenarios[region] || {

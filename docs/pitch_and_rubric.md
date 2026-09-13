@@ -21,7 +21,7 @@ During catastrophic events, emergency response fails not due to lack of goodwill
 | Single unverified report triggers panic | **Confidence-Tier Engine**: Dynamic promotions (`GREY` $\rightarrow$ `AMBER` $\rightarrow$ `RED`) via proximity peer verification and trusted municipal signatures |
 | Flat first-come-first-served SOS queue | **Vulnerability-Based Triage**: 1-tap medical/infant tags auto-pin urgent cases to the top of a 4-column Kanban board |
 | Responders duplicate each other's work | **Assignment Locking**: 409 Conflict protocol locks coordinates to one field team upon claim |
-| Static shelter address lists | **5-Resource Readiness Audits & Auto-Rerouting**: If a shelter status turns `RED`, the system automatically reroutes evacuees to the nearest viable green haven |
+| Static shelter address lists | **5-Resource Readiness Audits & Auto-Redirect**: If a shelter status turns `RED`, the system automatically redirects evacuees to the nearest viable green haven |
 | Hard crash on cellular outage | **Offline Telemetry Gateway**: Low-bandwidth raw SMS parser (`SHTR`, `SOS`) with local browser queueing and monotonic sync |
 
 ---
@@ -30,7 +30,7 @@ During catastrophic events, emergency response fails not due to lack of goodwill
 
 ### 1. "How would your platform interface with physical IoT sensors, weather stations, or drones?"
 > **Our Answer:**
-> *"Our risk engine is designed around an event-driven telemetry adapter layer (`processTelemetryAndAlert`). Any physical IoT hardware—whether a LoRaWAN river water level gauge, a smoke/particulate sensor, or a drone telemetry feed—posts standard JSON to `/api/alerts/simulate` or through our MQTT/WebSocket pipeline. In our live demo, we simulate sensor readings for floods, extreme wildfires, and earthquakes to prove the decision-engine math works deterministically without relying on fragile physical hardware on a conference stage."*
+> *"The platform accepts telemetry data (rainfall, water level, seismic readings) via a JSON HTTP endpoint (`/api/alerts/simulate`), designed to be compatible with real sensor gateways in a production deployment. No physical LoRaWAN hardware or network server integration is included in this submission — telemetry is currently simulated/demo data unless a real `OPENWEATHER_API_KEY` is configured, in which case live weather data is used."*
 
 ### 2. "Why did you use text-based matching rather than facial recognition for missing persons?"
 > **Our Answer:**

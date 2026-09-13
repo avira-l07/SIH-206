@@ -1,6 +1,6 @@
 # SIH26206: 3-Minute Live Stage Demo Script
 
-**Objective:** Showcase the platform's four differentiators (Multi-hazard IoT simulation, Vulnerability Triage, Ground-truth Peer Verification, and Offline Mesh/SMS resilience) in under 180 seconds with zero downtime risk.
+**Objective:** Showcase the platform's four differentiators (Multi-hazard IoT simulation, Vulnerability Triage, Ground-truth Peer Verification, and Offline Relay/SMS resilience) in under 180 seconds with zero downtime risk.
 
 ---
 

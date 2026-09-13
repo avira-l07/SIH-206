@@ -1,7 +1,7 @@
 # PRD - SIH26206: AI/IoT-Powered Disaster Management Platform
 
 ## 1. What to Build
-A web application that centralizes disaster preparedness and response for citizens, rescue teams, and government agencies. Core idea: one dashboard that collects data (weather/GIS/crowdsourced/sensor), predicts risk, alerts people in real time, coordinates resources during a disaster, and **verifies ground-truth data so responders can trust it under chaotic, low-connectivity conditions.**
+A web application that centralizes disaster preparedness and response for citizens, rescue teams, and government agencies. Core idea: one dashboard that collects data (weather/GIS/crowdsourced/sensor), evaluates risk via deterministic thresholds, alerts people in real time, coordinates resources during a disaster, and **verifies ground-truth data so responders can trust it under chaotic, low-connectivity conditions.**
 
 **Problem it solves:**
 - Delayed alerts and communication during disasters
@@ -47,7 +47,7 @@ A web application that centralizes disaster preparedness and response for citize
 9. **Shelter Readiness & Resource Audits** — citizens/admins toggle bed/water/rations/power status per shelter; color-coded gauge (green/yellow/red); auto-flag + redirect when a shelter crosses 90% occupancy or runs out of water
 10. **Vulnerability-Based SOS Triage** — one-tap tags for infants, bedridden elders, pregnant women, dialysis patients; Kanban board (Reported → Verified → Dispatched → Rescued); urgent tags auto-jump the queue and lock coordinates to one team to prevent duplicate dispatch
 11. **Confidence-Tier Verification for Crowdsourced Reports** — in-app-only camera capture (no gallery upload) + peer-confirmation prompts to users within ~300m; pins colored grey (unverified) / amber (1 confirmation) / red (3+ confirmations or trusted user); dispatch only fires on amber/red, grey stays in a review queue
-12. **Hyper-Local Hazard & Route Navigability** — geotagged hazard reports (water depth, fallen trees, downed lines) rendered as hazard polygons on the map; blocked road segments auto-excluded from suggested rescue/relief routes
+12. **Hyper-Local Hazard & Route Obstruction Awareness** — Confirmed hazard reports (e.g. submerged or waist-deep flooding) are rendered as visual obstruction markers directly on the operational map, giving responders and citizens real-time situational awareness of blocked routes. The platform does not include an automated turn-by-turn routing engine — responders and citizens use this hazard-aware map view to choose their own route manually. Automated route generation is a planned extension, not a current feature.
 
 ### Nice-to-have (stretch — pitch as roadmap if time-constrained, but build a thin working version if possible)
 13. **Civilian Asset & Skill Mobilization** — "I Have / I Can" listings (boats, tractors, generators, off-duty medics) as a filterable map layer within 2km of active incidents

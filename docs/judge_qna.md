@@ -44,7 +44,7 @@ This framing turns a limitation into a demonstrated engineering decision. Use it
 - "Our platform operates with zero cellular data or public internet uplink, via an emergency local network relay on a portable hotspot."
 - "In full airplane mode, the app boots from cache, renders previously-cached maps, and stores emergency SOS calls in persistent local storage with zero data loss."
 - "Client-generated idempotency keys guarantee that network retries or repeated sync attempts never create duplicate emergency records."
-- "Our shelter readiness engine evaluates five critical resources in real time and automatically reroutes evacuees away from a depleted shelter."
+- "Our shelter readiness engine evaluates five critical resources in real time and automatically redirects evacuees away from a depleted shelter to the nearest viable green haven."
 - "Our crowd-verification system uses a multi-peer confidence-tier state machine with dispute detection to actively suppress misinformation, not just collect reports."
 - "We capture GPS location at the moment of distress, not at reconnect time, so a moving victim doesn't corrupt their own incident location."
 

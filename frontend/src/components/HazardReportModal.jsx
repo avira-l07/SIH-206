@@ -4,7 +4,7 @@ import api from '../services/api';
 import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 
 export default function HazardReportModal({ isOpen, onClose, onReportCreated, defaultCoords }) {
-  const [coords, setCoords] = useState(defaultCoords || { lat: 19.0760, lng: 72.8777 });
+  const [coords, setCoords] = useState(defaultCoords || { lat: 20.5937, lng: 78.9629 });
   const [hazardNote, setHazardNote] = useState('');
   const [severityBenchmark, setSeverityBenchmark] = useState('');
   const [photoBase64, setPhotoBase64] = useState(null);
@@ -18,6 +18,12 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
       setCoords(defaultCoords);
     }
   }, [defaultCoords]);
+
+  useEffect(() => {
+    if (isOpen && typeof navigator !== 'undefined' && navigator.geolocation) {
+      acquireLocation();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

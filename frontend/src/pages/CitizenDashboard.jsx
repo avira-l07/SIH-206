@@ -21,15 +21,17 @@ export default function CitizenDashboard() {
   const [hazardReports, setHazardReports] = useState([]);
   const [mySOSList, setMySOSList] = useState([]);
   const [focusCoords, setFocusCoords] = useState(null);
-  const [userCoords, setUserCoords] = useState({
-    lat: typeof user?.lat === 'number' ? user.lat : 19.0760,
-    lng: typeof user?.lng === 'number' ? user.lng : 72.8777,
-  });
+  const liveGpsAcquired = React.useRef(false);
+  const [userCoords, setUserCoords] = useState(
+    typeof user?.lat === 'number' && typeof user?.lng === 'number'
+      ? { lat: user.lat, lng: user.lng }
+      : { lat: 20.5937, lng: 78.9629 }
+  );
   const [hazardModalOpen, setHazardModalOpen] = useState(false);
 
-  // Synchronize with authenticated user's saved GPS if available
+  // Synchronize with authenticated user's saved GPS ONLY if live GPS hasn't been acquired yet
   useEffect(() => {
-    if (typeof user?.lat === 'number' && typeof user?.lng === 'number') {
+    if (!liveGpsAcquired.current && typeof user?.lat === 'number' && typeof user?.lng === 'number') {
       setUserCoords({ lat: user.lat, lng: user.lng });
     }
   }, [user]);
@@ -55,11 +57,12 @@ export default function CitizenDashboard() {
   useEffect(() => {
     fetchData();
 
-    // Auto-detect browser GPS on mount and sync to backend for radius alert delivery
+    // Auto-detect browser GPS on mount and prioritize over stored DB coords
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          liveGpsAcquired.current = true;
           setUserCoords(coords);
           // Persist coordinates silently so citizen receives radius alerts
           api.patch('/auth/location', coords).catch(() => {});
@@ -431,7 +434,7 @@ export default function CitizenDashboard() {
         defaultCoords={userCoords}
       />
 
-      {/* Simulated Offline Mesh & SMS Gateway Drawer */}
+      {/* Simulated Offline Relay & SMS Gateway Drawer */}
       <OfflineSimulationDrawer onDataChanged={fetchData} />
     </div>
   );

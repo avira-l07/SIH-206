@@ -35,16 +35,41 @@ function validateAlert(req, res, next) {
   if (lng !== undefined && typeof lng === 'string') lng = parseFloat(lng);
   if (radiusKm !== undefined && typeof radiusKm === 'string') radiusKm = parseFloat(radiusKm);
 
+  // If coordinates are omitted (e.g. lightweight area broadcast action), auto-fill region centers
+  if (lat === undefined || lng === undefined || isNaN(lat) || isNaN(lng)) {
+    const regLower = (region || '').toLowerCase();
+    if (regLower.includes('chamoli')) {
+      lat = 30.4074; lng = 79.3248;
+    } else if (regLower.includes('rishikesh')) {
+      lat = 30.0869; lng = 78.2676;
+    } else if (regLower.includes('haridwar')) {
+      lat = 29.9457; lng = 78.1642;
+    } else if (regLower.includes('joshimath')) {
+      lat = 30.5562; lng = 79.5676;
+    } else if (regLower.includes('rudraprayag')) {
+      lat = 30.2844; lng = 78.9811;
+    } else {
+      lat = 30.3165; lng = 78.0322;
+    }
+  }
+
+  // Auto-fill default hazardType, severity, radiusKm if omitted
+  if (!hazardType) hazardType = 'ADVISORY';
+  if (!severity) severity = 'WATCH';
+  if (radiusKm === undefined || isNaN(radiusKm)) radiusKm = 15.0;
+
+  req.body.hazardType = hazardType;
+  req.body.severity = severity;
   req.body.lat = lat;
   req.body.lng = lng;
-  if (radiusKm !== undefined) req.body.radiusKm = radiusKm;
+  req.body.radiusKm = radiusKm;
 
-  if (!hazardType || !HAZARD_TYPES.includes(hazardType)) {
+  if (!HAZARD_TYPES.includes(hazardType)) {
     return res.status(400).json({
       error: `Invalid hazardType '${hazardType}'. Allowed: ${HAZARD_TYPES.join(', ')}`
     });
   }
-  if (!severity || !SEVERITIES.includes(severity)) {
+  if (!SEVERITIES.includes(severity)) {
     return res.status(400).json({
       error: `Invalid severity '${severity}'. Allowed: ${SEVERITIES.join(', ')}`
     });

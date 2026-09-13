@@ -5,7 +5,25 @@ const prisma = require('../db');
  * Capped strictly at 3 hazard types per SIH26206 PRD: FLOOD, EARTHQUAKE, FIRE.
  */
 function evaluateRisk(telemetry = {}) {
-  const { rain1h = 0, windSpeed = 0, temp = 30, humidity = 80, seismic = 0, smokeIndex = 0 } = telemetry;
+  const { rain1h = 0, windSpeed = 0, temp = 30, humidity = 80, seismic = 0, smokeIndex = 0, soilMoisture = 0, landslideRisk = false, condition = '' } = telemetry;
+
+  // 1. Landslide Risk Rules (High mountain terrain saturation / slope failure)
+  if (landslideRisk || (soilMoisture >= 85 && rain1h >= 50) || condition.toLowerCase().includes('landslide')) {
+    return {
+      hazardType: 'LANDSLIDE',
+      severity: 'CRITICAL',
+      score: 94,
+      reason: `Torrential downpour (${rain1h} mm/h) and severe soil saturation (${soilMoisture || 90}%) detected. High probability of active slope failure and highway rockfalls.`,
+    };
+  }
+  if (soilMoisture >= 65 && rain1h >= 30) {
+    return {
+      hazardType: 'LANDSLIDE',
+      severity: 'WATCH',
+      score: 68,
+      reason: `Elevated slope soil moisture (${soilMoisture}%) with steady rainfall (${rain1h} mm/h). Landslide watch in effect for valley corridors.`,
+    };
+  }
 
   // 1. Flood Risk Rules
   if (rain1h >= 60 || (rain1h >= 45 && windSpeed >= 40)) {

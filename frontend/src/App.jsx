@@ -55,7 +55,7 @@ function MainApp() {
 
       {/* Field-Ops Hairline Footer */}
       <footer className="w-full bg-[#EFECE4] border-t border-[#D8D3C7] py-2 px-4 text-center text-[10px] font-mono text-[#14231F]/60">
-        SIH26206 DISASTER RESILIENCE PLATFORM • REAL-TIME MESH NODE • LATENCY: &lt;50MS
+        SIH26206 DISASTER RESILIENCE PLATFORM • REAL-TIME LOCAL RELAY NODE • LATENCY: &lt;50MS
       </footer>
     </div>
   );

@@ -15,7 +15,7 @@ Backend (Node.js/Express)
        ├──► WebSocket/Socket.io (live alert + SOS updates)
        ├──► Rule-based Risk Engine (simple logic)
        ├──► Verification Service (confidence-tier scoring for crowdsourced reports)
-       └──► Offline Sync Queue (simulated — timestamps + staleness flags for "mesh"/SMS-style data)
+       └──► Offline Sync Queue (Service Worker + IndexedDB queue auto-syncing to local relay or cloud)
 ```
 
 **User flow example (SOS):**
@@ -25,12 +25,14 @@ Backend (Node.js/Express)
 4. Admin/Volunteer dashboard updates in real time, shows pin on map (color/urgency reflects tag).
 5. Volunteer accepts -> status changes to "In Progress" -> "Resolved" (locks the request to that volunteer to prevent duplicate dispatch).
 
-**User flow example (Hazard report verification):**
+**User flow example (Hazard report verification & route obstruction awareness):**
 1. Citizen submits a hazard report using the in-app camera only (no gallery upload) — e.g. "flooded road, waist-deep."
 2. Report is created with `confidence_tier: grey` and `confirmations_count: 0`.
 3. Nearby users (within ~300m) get a "Confirm: is this accurate?" prompt.
 4. Each confirmation increments `confirmations_count`. At 1 confirmation → `amber`. At 3+ (or one trusted/verified user) → `red`.
-5. Only `amber`/`red` reports trigger volunteer dispatch or route recalculation; `grey` reports sit in a secondary review queue for an admin to manually verify.
+5. Only `amber`/`red` reports trigger volunteer dispatch and render high-visibility obstruction markers on the map; `grey` reports sit in a secondary review queue for an admin to manually verify.
+
+> "Confirmed hazard reports (e.g. submerged or waist-deep flooding) are rendered as visual obstruction markers directly on the operational map, giving responders and citizens real-time situational awareness of blocked routes. The platform does not include an automated turn-by-turn routing engine — responders and citizens use this hazard-aware map view to choose their own route manually. Automated route generation is a planned extension, not a current feature."
 
 **User flow example (Shelter audit):**
 1. A citizen or admin near a shelter toggles ground-truth status: beds free, water OK, rations OK, restrooms OK, power OK.
@@ -52,7 +54,7 @@ Backend (Node.js/Express)
 | **Maps** | Leaflet.js + OpenStreetMap (free, no API key needed) |
 | **Weather** | OpenWeatherMap free API + mock fallback |
 | **Auth** | JWT + bcrypt |
-| **Hosting** | Vercel (frontend) + Render/Railway (backend) + Neon/Supabase (Postgres) |
+| **Hosting** | Vercel (frontend) + Render (backend with persistent disk volume) |
 
 ---
 
@@ -77,6 +79,10 @@ Backend (Node.js/Express)
 ---
 
 ## 4. Verification & Risk Logic (rule-based, explainable AI)
+
+> "The platform uses a deterministic, threshold-based risk engine (`riskEngine.service.js`) that evaluates current sensor/telemetry values against defined thresholds (e.g. rainfall > 60mm/h triggers a flood risk flag). This is an explainable rules engine, not a multi-tier cascading-consequence prediction model — we chose transparency and auditability over an unproven predictive claim."
+
+> "The platform accepts telemetry data (rainfall, water level, seismic readings) via a JSON HTTP endpoint (`/api/alerts/simulate`), designed to be compatible with real sensor gateways in a production deployment. No physical LoRaWAN hardware or network server integration is included in this submission — telemetry is currently simulated/demo data unless a real `OPENWEATHER_API_KEY` is configured, in which case live weather data is used."
 
 ### 4.1 SOS Ticket 7-State Lifecycle & Ownership State Machine (Sprint 3)
 ```
@@ -152,6 +158,8 @@ if (occupancy_pct >= 0.9 || isNumericRed || isBooleanRed) {
 
 ## 5. Offline Resilience: Local Relay & Persistent PWA Queue
 
+> "Offline resilience is implemented via a local-hub relay architecture: devices connect to a local network hub (no internet uplink required), and a Service Worker + IndexedDB queue on each device persists actions taken while disconnected, auto-syncing once connectivity to the hub or internet is restored. This is a hub-and-spoke local relay, not a peer-to-peer Bluetooth/Wi-Fi Direct mesh network — true ad-hoc mesh relay would require native mobile code beyond this web platform's scope."
+
 During major disasters, municipal power grids fail and cellular infrastructure goes dark. The platform addresses zero-internet and low-bandwidth scenarios using a three-tiered fallback architecture:
 
 ```
@@ -159,7 +167,7 @@ During major disasters, municipal power grids fail and cellular infrastructure g
          │
          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. Local Network Relay Hub (Hub-and-Spoke Mesh)             │
+│ 1. Local Network Relay Hub (Hub-and-Spoke Local Relay)      │
 │    - Presentation laptop or local router acts as emergency  │
 │      Wi-Fi hotspot with zero internet/WAN uplink.           │
 │    - Backend binds to 0.0.0.0; clients auto-resolve LAN IP. │
@@ -236,6 +244,7 @@ Max-Priority Modal                             OS Lock-Screen Alert
    - Plays a synthesized dual-tone acoustic alert siren (880Hz / 660Hz) via the Web Audio API.
    - Requires explicit civilian acknowledgment tap ("I ACKNOWLEDGE THIS EMERGENCY ALERT"); does not auto-dismiss.
 
-### 6.2 Production Roadmap: NDMA Sachet & Cell Broadcast Integration
-Web platforms cannot bypass physical OS hardware Do Not Disturb (DND) or silent switches — this is an operating system privilege reserved for native telecom cell broadcasts. In a production national deployment, this platform's response coordination layer is designed to ingest and trigger feeds via **NDMA's Sachet national portal** and CAP (Common Alerting Protocol) gateways for carrier-grade cell broadcast delivery.
+### 6.2 National Alerting Standards & NDMA Sachet Integration
+
+> "The platform's alert system is architecturally compatible with national alerting standards (Common Alerting Protocol) and could integrate with NDMA's Sachet portal in a production deployment with the appropriate government API access. This integration is not implemented in the current submission — alerts are created and broadcast directly by verified platform administrators."
 

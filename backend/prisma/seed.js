@@ -573,7 +573,7 @@ async function main() {
     data: {
       rawPayload: 'SHTR 104 F0 W1 B15',
       parsedData: JSON.stringify({ shelterId: 104, capacityFullPct: 0, waterAvailable: true, bedsFree: 15 }),
-      sourceNode: 'Field Radio Node #2 (Mesh/SMS)',
+      sourceNode: 'Field Radio Node #2 (Relay/SMS)',
       syncedAt: new Date(Date.now() - 3600 * 1000), // 1 hour ago
     },
   });

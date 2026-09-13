@@ -306,7 +306,7 @@ export default function ShelterList({
               NEAREST SHELTER ({nearestShelter.name}) IS AT CAPACITY / DEPLETED
             </div>
             <div className="text-[11px] text-white/95 mt-0.5 flex items-center gap-1">
-              <span>Auto-Rerouting to nearest viable safe haven:</span>
+              <span>Redirecting to nearest viable safe haven:</span>
               <button
                 type="button"
                 onClick={() => onSelectShelter && onSelectShelter(nextViableShelter)}

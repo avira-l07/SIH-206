@@ -17,6 +17,12 @@ import {
 
 const POPULAR_REGIONS = [
   'All Regions (National/Statewide)',
+  'Chamoli - Badrinath Corridor',
+  'Dehradun - Doon Valley Catchment',
+  'Rishikesh - Ganga Basin',
+  'Haridwar - Silt & Flood Zone',
+  'Joshimath - Mountain Refuge',
+  'Rudraprayag - Valley Confluence',
   'Mumbai',
   'Pune',
   'Thane',
@@ -47,7 +53,8 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
   const [phoneError, setPhoneError] = useState('');
 
   // Web Push State
-  const [pushStatus, setPushStatus] = useState('checking'); // 'checking', 'unsupported', 'prompt', 'granted', 'denied'
+  const [isSecure, setIsSecure] = useState(true);
+  const [pushStatus, setPushStatus] = useState('checking'); // 'checking', 'unsupported', 'insecure_context', 'prompt', 'granted', 'denied'
   const [pushLoading, setPushLoading] = useState(false);
   const [pushSuccess, setPushSuccess] = useState('');
   const [pushError, setPushError] = useState('');
@@ -71,16 +78,25 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
   useEffect(() => {
     loadStats();
 
-    // Check Push & Service Worker capability
+    // Check Push & Service Worker capability with Secure Context check
+    const secure = typeof window !== 'undefined' ? Boolean(window.isSecureContext) : true;
+    setIsSecure(secure);
+
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       setPushStatus('unsupported');
+    } else if (!secure) {
+      setPushStatus('insecure_context');
     } else {
-      if (Notification.permission === 'granted') {
-        setPushStatus('granted');
-      } else if (Notification.permission === 'denied') {
-        setPushStatus('denied');
+      if (typeof Notification !== 'undefined') {
+        if (Notification.permission === 'granted') {
+          setPushStatus('granted');
+        } else if (Notification.permission === 'denied') {
+          setPushStatus('denied');
+        } else {
+          setPushStatus('prompt');
+        }
       } else {
-        setPushStatus('prompt');
+        setPushStatus('unsupported');
       }
     }
   }, []);
@@ -117,20 +133,43 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
     setPushLoading(true);
 
     try {
+      if (typeof window !== 'undefined' && !window.isSecureContext) {
+        throw new Error(
+          'Web Push requires a Secure Context (HTTPS or http://localhost). Browsers block the Push API over plain HTTP on LAN IPs (e.g. 192.168.x.x). Please test on localhost:5173 or deployed HTTPS.'
+        );
+      }
+
       if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        throw new Error('Web Push is not supported on this browser.');
+        throw new Error('Web Push is not supported on this browser or platform.');
       }
 
       // Request Permission
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
         setPushStatus(permission === 'denied' ? 'denied' : 'prompt');
-        throw new Error('Notification permission was not granted.');
+        throw new Error(
+          permission === 'denied'
+            ? 'Notifications are blocked in your browser settings. Please allow notifications for this site to receive emergency push alerts.'
+            : 'Notification permission was not granted.'
+        );
       }
       setPushStatus('granted');
 
-      // Ensure SW is ready
-      const registration = await navigator.serviceWorker.ready;
+      // Ensure SW is registered and activated
+      let registration = await navigator.serviceWorker.getRegistration();
+      if (!registration) {
+        registration = await navigator.serviceWorker.register('/sw.js');
+      }
+
+      // Avoid indefinite hang if SW takes time to activate
+      const swReadyPromise = navigator.serviceWorker.ready;
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Service Worker activation timed out (6s). Please reload and try again.')),
+          6000
+        )
+      );
+      const activeReg = await Promise.race([swReadyPromise, timeoutPromise]);
 
       // Get VAPID public key
       const keyRes = await api.get('/registry/vapid-public-key');
@@ -142,7 +181,7 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
       const convertedKey = urlBase64ToUint8Array(vapidPublicKey);
 
       // Subscribe device with pushManager
-      const subscription = await registration.pushManager.subscribe({
+      const subscription = await activeReg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: convertedKey,
       });
@@ -157,7 +196,7 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
         region: regionValue,
       });
 
-      setPushSuccess('This browser is now armed for instantaneous emergency alerts!');
+      setPushSuccess('This device is now armed for instantaneous emergency alerts!');
       loadStats();
     } catch (err) {
       console.error('Web Push subscription error:', err);
@@ -368,6 +407,7 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
                       {pushStatus === 'granted' && '✅ Permission Granted'}
                       {pushStatus === 'denied' && '❌ Blocked by Browser'}
                       {pushStatus === 'prompt' && '🔔 Ready to Request'}
+                      {pushStatus === 'insecure_context' && '⚠️ Insecure Origin (LAN)'}
                       {pushStatus === 'unsupported' && '⚠️ Unsupported Device'}
                     </span>
                   </div>
@@ -376,6 +416,18 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
                     even with browser backgrounded. (iOS requires "Add to Home Screen").
                   </p>
                 </div>
+
+                {!isSecure && (
+                  <div className="p-2.5 bg-[#FAF8F5] border border-[#E5A93C]/50 text-[#8F5B10] text-xs rounded font-mono space-y-1">
+                    <div className="font-bold flex items-center gap-1 text-[#B23A2E]">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Security Requirement: HTTPS or Localhost</span>
+                    </div>
+                    <p className="text-[11px] text-[#14231F]/80 leading-relaxed">
+                      Web Push is blocked over plain HTTP on LAN IPs (e.g. 192.168.x.x) by browser security rules. To test Web Push, access via <strong>http://localhost:5173</strong> or your deployed HTTPS URL. (SMS registration above works over any IP).
+                    </p>
+                  </div>
+                )}
 
                 <button
                   type="button"

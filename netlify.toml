@@ -1,0 +1,16 @@
+# Netlify Configuration for SIH26206 Disaster Resilience Platform
+# Builds the Vite React SPA located in the frontend/ subdirectory.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Single-Page Application (SPA) routing fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

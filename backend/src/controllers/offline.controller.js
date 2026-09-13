@@ -32,7 +32,7 @@ async function ingestSMS(req, res) {
 }
 
 /**
- * Fetch simulated mesh & offline sync logs
+ * Fetch offline sync logs
  */
 async function getSyncLogs(req, res) {
   try {
