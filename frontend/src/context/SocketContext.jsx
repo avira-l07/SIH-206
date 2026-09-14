@@ -13,13 +13,13 @@ export function SocketProvider({ children }) {
 
   useEffect(() => {
     const currentToken = token || localStorage.getItem('sih_auth_token') || localStorage.getItem('token');
-    const socketInstance = io(API_BASE_URL, {
+    const socketInstance = io(API_BASE_URL || undefined, {
       auth: { token: currentToken },
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       timeout: 10000,
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
     });
 
     socketInstance.on('connect', () => {

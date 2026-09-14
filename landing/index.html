@@ -1,0 +1,2524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DisasterShield — Real-Time Disaster Management &amp; Response</title>
+<meta name="description" content="Real-time disaster alerts, live hazard maps and emergency resources for communities, responders and local authorities across India.">
+<meta property="og:title" content="DisasterShield — Real-Time Disaster Management &amp; Response">
+<meta property="og:description" content="Get real-time alerts, live hazard maps and emergency resources — all in one place.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 3L41 10V22C41 33.5 34 41.8 24 45C14 41.8 7 33.5 7 22V10L24 3Z' fill='%231E5FE0'/%3E%3Cpath d='M17.5 24.5L21.7 28.7L30.5 19.5' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #0B1F3D;
+    --navy-2: #102a52;
+    --navy-dark: #07152B;
+    --blue: #1E5FE0;
+    --blue-hover: #164BB5;
+    --blue-tint: #EAF1FD;
+    --sky: #F4F7FC;
+    --red: #DC2626;
+    --red-tint: #FDECEC;
+    --orange: #E9750F;
+    --orange-tint: #FDF0E3;
+    --green: #17924E;
+    --green-tint: #E8F7EF;
+    --purple: #7C3AED;
+    --purple-tint: #F1EBFD;
+    --teal: #0E8C82;
+    --teal-tint: #E4F6F4;
+    --ink: #0F1B2D;
+    --ink-soft: #4B5A70;
+    --line: #E2E8F0;
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow-sm: 0 2px 8px rgba(15, 27, 45, 0.05);
+    --shadow: 0 10px 30px rgba(15, 27, 45, 0.08);
+    --shadow-lg: 0 20px 50px rgba(11, 31, 61, 0.16);
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  * { box-sizing: border-box; }
+  
+  html {
+    scroll-behavior: smooth;
+    text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  body {
+    margin: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: #FFFFFF;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  /* Smooth anchor offsets for sticky header */
+  section {
+    scroll-margin-top: 76px;
+  }
+
+  h1, h2, h3, h4, .brand-name {
+    font-family: 'Manrope', 'Inter', sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  a { text-decoration: none; color: inherit; }
+  button { font-family: inherit; cursor: pointer; border: none; }
+  img { max-width: 100%; display: block; }
+  
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+  .section-pad { padding: 88px 0; }
+  
+  .eyebrow {
+    color: var(--blue);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin: 0 0 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--blue);
+    display: inline-block;
+  }
+  
+  .h2 {
+    font-size: clamp(28px, 3.4vw, 42px);
+    line-height: 1.15;
+    margin: 0 0 14px;
+    color: var(--navy);
+    font-weight: 800;
+  }
+  .lede {
+    font-size: 16.5px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    max-width: 560px;
+    margin: 0;
+  }
+
+  /* BUTTONS with smooth transitions */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 22px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 14.5px;
+    border: 1px solid transparent;
+    transition: all 0.2s var(--ease-out);
+    will-change: transform, box-shadow;
+    user-select: none;
+  }
+  .btn:hover {
+    transform: translateY(-2px);
+  }
+  .btn:active {
+    transform: translateY(1px);
+  }
+  .btn-primary {
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 6px 18px rgba(30, 95, 224, 0.28);
+  }
+  .btn-primary:hover {
+    background: var(--blue-hover);
+    box-shadow: 0 8px 24px rgba(30, 95, 224, 0.38);
+    color: #fff;
+  }
+  .btn-outline {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(8px);
+  }
+  .btn-outline:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: #fff;
+    color: #fff;
+  }
+  .btn-ghost {
+    background: var(--blue-tint);
+    color: var(--blue);
+  }
+  .btn-ghost:hover {
+    background: #dbe6fb;
+    color: var(--blue-hover);
+  }
+  .btn-red {
+    background: var(--red);
+    color: #fff;
+    box-shadow: 0 6px 18px rgba(220, 38, 38, 0.25);
+  }
+  .btn-red:hover {
+    background: #b91c1c;
+    color: #fff;
+  }
+  .btn-white {
+    background: #fff;
+    color: var(--navy);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-white:hover {
+    background: #F8FAFC;
+  }
+
+  /* NAVBAR - Premium blur & hardware accelerated */
+  header.nav {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(226, 232, 240, 0.85);
+    transition: box-shadow 0.25s var(--ease-out), background 0.25s var(--ease-out);
+    transform: translateZ(0);
+  }
+  header.nav.scrolled {
+    box-shadow: 0 6px 24px rgba(15, 27, 45, 0.08);
+    background: rgba(255, 255, 255, 0.95);
+  }
+  .nav-inner {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+  }
+  .brand-mark { width: 36px; height: 36px; flex: none; }
+  .brand-text .brand-name { font-size: 18px; font-weight: 800; color: var(--navy); line-height: 1.1; }
+  .brand-text .brand-tag { font-size: 11px; color: var(--ink-soft); letter-spacing: 0.02em; }
+  
+  .nav-links {
+    display: flex;
+    gap: 24px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .nav-links a {
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    padding: 6px 2px;
+    border-bottom: 2px solid transparent;
+    transition: color 0.18s ease, border-color 0.18s ease;
+  }
+  .nav-links a.active, .nav-links a:hover {
+    color: var(--blue);
+    border-color: var(--blue);
+  }
+
+  .nav-right { display: flex; align-items: center; gap: 12px; }
+  .icon-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    position: relative;
+    color: var(--ink-soft);
+    transition: all 0.18s var(--ease-out);
+  }
+  .icon-btn:hover {
+    border-color: var(--blue);
+    color: var(--blue);
+    background: var(--blue-tint);
+  }
+  .icon-btn .dot {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    width: 7px;
+    height: 7px;
+    background: var(--red);
+    border-radius: 50%;
+    animation: pulseDot 2s infinite;
+  }
+  @keyframes pulseDot {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.4); opacity: 0.6; }
+  }
+
+  .lang-switch { position: relative; }
+  .lang-menu {
+    display: none;
+    position: absolute;
+    top: 46px;
+    right: 0;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    list-style: none;
+    margin: 0;
+    padding: 6px;
+    min-width: 130px;
+    z-index: 1100;
+    animation: fadeInMenu 0.15s ease-out;
+  }
+  @keyframes fadeInMenu {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .lang-menu.open { display: block; }
+  .lang-menu li {
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .lang-menu li:hover { background: var(--blue-tint); color: var(--blue); }
+  .lang-menu li.active { color: var(--blue); background: var(--blue-tint); }
+
+  .nav-auth { display: flex; gap: 8px; }
+  .nav-auth .btn { padding: 8px 16px; font-size: 13.5px; }
+
+  .hamburger {
+    display: none;
+    background: none;
+    border: none;
+    padding: 6px;
+    color: var(--navy);
+  }
+  @media (max-width: 940px) {
+    .nav-links, .nav-auth { display: none; }
+    .hamburger { display: flex; }
+  }
+  #mobileMenu {
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    background: #fff;
+    border-top: 1px solid var(--line);
+    padding: 12px 24px 20px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+  }
+  #mobileMenu.open { display: flex; }
+  #mobileMenu a {
+    padding: 12px 4px;
+    font-weight: 600;
+    color: var(--ink);
+    border-bottom: 1px solid var(--line);
+  }
+  #mobileMenu .mm-auth { display: flex; gap: 10px; margin-top: 14px; }
+  .mm-lang { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
+  .mm-lang-opts { display: flex; gap: 6px; }
+  .mm-lang-opts button {
+    border: 1px solid var(--line);
+    background: #fff;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--ink-soft);
+  }
+  .mm-lang-opts button.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+  /* HERO SECTION */
+  .hero {
+    position: relative;
+    color: #fff;
+    overflow: hidden;
+    background:
+      linear-gradient(100deg, rgba(9, 20, 40, 0.94) 15%, rgba(9, 20, 40, 0.78) 55%, rgba(9, 20, 40, 0.45) 85%),
+      url('https://images.unsplash.com/photo-1547683905-f686c993aae5?q=80&w=1800&auto=format&fit=crop') center/cover no-repeat;
+  }
+  .hero-inner {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 84px 24px 96px;
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 52px;
+    align-items: center;
+  }
+  .hero-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #9DC1FF;
+    margin-bottom: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hero-label::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5B9BFF;
+    animation: pulseDot 1.6s infinite;
+  }
+  .hero h1 {
+    font-size: clamp(32px, 4.4vw, 52px);
+    line-height: 1.1;
+    margin: 0 0 20px;
+    font-weight: 800;
+  }
+  .hero h1 .accent { color: #5B9BFF; }
+  .hero p {
+    font-size: 16.5px;
+    line-height: 1.65;
+    color: #CBD7EA;
+    max-width: 480px;
+    margin: 0 0 32px;
+  }
+  .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; }
+  
+  .hero-map-card {
+    background: #0B1F3D;
+    border-radius: 20px;
+    padding: 10px;
+    box-shadow: var(--shadow-lg);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    position: relative;
+    overflow: hidden;
+  }
+  #heroMap {
+    height: 380px;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #0E2548;
+  }
+  .map-legend {
+    position: absolute;
+    bottom: 22px;
+    left: 22px;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(10px);
+    border-radius: 12px;
+    padding: 10px 14px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink);
+    z-index: 400;
+    min-width: 140px;
+    border: 1px solid rgba(255,255,255,0.4);
+  }
+  .map-legend .lg-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .lg-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  @media (max-width: 960px) {
+    .hero-inner { grid-template-columns: 1fr; padding: 48px 24px 64px; }
+    #heroMap { height: 300px; }
+  }
+
+  /* FEATURES */
+  .features { background: #fff; }
+  .feat-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    margin-bottom: 44px;
+    flex-wrap: wrap;
+  }
+  .feat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 900px) { .feat-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .feat-grid { grid-template-columns: 1fr; } }
+  .feat-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 26px 24px;
+    transition: box-shadow 0.25s var(--ease-out), transform 0.25s var(--ease-out), border-color 0.25s var(--ease-out);
+  }
+  .feat-card:hover {
+    box-shadow: var(--shadow);
+    transform: translateY(-4px);
+    border-color: #CBD5E1;
+  }
+  .feat-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 18px;
+    font-size: 22px;
+  }
+  .feat-card h3 { font-size: 17.5px; margin: 0 0 8px; color: var(--navy); }
+  .feat-card p { font-size: 14.5px; line-height: 1.55; color: var(--ink-soft); margin: 0 0 14px; }
+  .feat-arrow { font-size: 14px; font-weight: 700; color: var(--blue); }
+
+  /* ============================================================
+     LIVE MAP SECTION — CLEAN UNBLOCKED CONTROLS & FAST MAP
+     ============================================================ */
+  .live-map-section {
+    background: var(--sky);
+    position: relative;
+  }
+  .lm-head {
+    max-width: 680px;
+    margin-bottom: 34px;
+  }
+  .lm-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr 310px;
+    gap: 20px;
+    align-items: stretch;
+  }
+  @media (max-width: 1120px) {
+    .lm-layout { grid-template-columns: 1fr; }
+  }
+
+  .lm-panel {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cat-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 11px 12px;
+    margin-bottom: 5px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    text-align: left;
+    transition: all 0.18s var(--ease-out);
+  }
+  .cat-btn:hover {
+    background: var(--blue-tint);
+    color: var(--blue);
+  }
+  .cat-btn.active {
+    background: var(--blue-tint);
+    border-color: #BFDBFE;
+    color: var(--blue);
+    font-weight: 700;
+  }
+  .cat-btn .cn { display: flex; align-items: center; gap: 10px; }
+  .cat-count {
+    font-weight: 700;
+    color: var(--ink-soft);
+    font-size: 12.5px;
+    background: #F1F5F9;
+    padding: 2px 8px;
+    border-radius: 99px;
+  }
+  .cat-btn.active .cat-count {
+    background: #DBEAFE;
+    color: var(--blue);
+  }
+
+  /* MAIN MAP CONTAINER WITH DEDICATED HEADER */
+  #mainMapCard {
+    position: relative;
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid var(--line);
+    background: #FFFFFF;
+    box-shadow: var(--shadow);
+    min-height: 620px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* DEDICATED MAP HEADER BAR — SEPARATE FROM CANVAS (NO OVERLAPPING!) */
+  .map-card-header {
+    background: #FFFFFF;
+    border-bottom: 1px solid var(--line);
+    padding: 12px 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    z-index: 10;
+  }
+  
+  .map-layers {
+    display: flex;
+    background: #F1F5F9;
+    border-radius: 10px;
+    padding: 4px;
+    gap: 3px;
+    border: 1px solid var(--line);
+  }
+  .map-layers button {
+    border: none;
+    background: transparent;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    border-radius: 8px;
+    transition: all 0.18s var(--ease-out);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .map-layers button:hover {
+    color: var(--blue);
+    background: rgba(30, 95, 224, 0.08);
+  }
+  .map-layers button.active {
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(30, 95, 224, 0.28);
+  }
+
+  .map-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .map-action-btn {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--navy);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.18s var(--ease-out);
+  }
+  .map-action-btn:hover {
+    background: var(--blue-tint);
+    border-color: #BFDBFE;
+    color: var(--blue);
+    transform: translateY(-1px);
+  }
+
+  /* MAP CANVAS WRAPPER */
+  .map-canvas-wrap {
+    position: relative;
+    width: 100%;
+    flex: 1;
+    min-height: 550px;
+    display: flex;
+  }
+
+  #mainMap {
+    width: 100%;
+    height: 100%;
+    min-height: 550px;
+    flex: 1;
+    background: #EAF0F6;
+  }
+
+  /* LEAFLET ZOOM CONTROLS (+ and -) — PERFECTLY POSITIONED & UNCLUTTERED */
+  .leaflet-top.leaflet-left {
+    top: 18px !important;
+    left: 18px !important;
+  }
+  .leaflet-control-zoom {
+    border: 1px solid rgba(15, 27, 45, 0.12) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 16px rgba(11, 31, 61, 0.16) !important;
+    overflow: hidden !important;
+  }
+  .leaflet-control-zoom a {
+    width: 36px !important;
+    height: 36px !important;
+    line-height: 36px !important;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    color: var(--navy) !important;
+    background: #FFFFFF !important;
+    border-bottom: 1px solid var(--line) !important;
+    transition: all 0.15s ease !important;
+  }
+  .leaflet-control-zoom a:last-child {
+    border-bottom: none !important;
+  }
+  .leaflet-control-zoom a:hover {
+    background: var(--blue-tint) !important;
+    color: var(--blue) !important;
+  }
+
+  /* MAP STATUS OVERLAY (Bottom Right) */
+  .map-status-pill {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    z-index: 500;
+    background: rgba(11, 31, 61, 0.88);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+    border: 1px solid rgba(255,255,255,0.18);
+    pointer-events: none;
+  }
+  .live-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22C55E;
+    box-shadow: 0 0 10px #22C55E;
+    animation: pulseDot 1.5s infinite;
+  }
+
+  /* LEAFLET CUSTOM MARKERS & POPUPS */
+  .custom-marker {
+    background: transparent;
+    border: none;
+  }
+  .marker-pin {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+    border: 2.5px solid #fff;
+    position: relative;
+    cursor: pointer;
+    transition: transform 0.2s var(--ease-out);
+  }
+  .marker-pin:hover {
+    transform: scale(1.15);
+    z-index: 1000;
+  }
+  .marker-pin.pulse::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    background: inherit;
+    opacity: 0.4;
+    animation: markerPulse 1.8s ease-out infinite;
+    z-index: -1;
+  }
+  @keyframes markerPulse {
+    0% { transform: scale(0.9); opacity: 0.6; }
+    100% { transform: scale(1.6); opacity: 0; }
+  }
+
+  /* POPUP STYLING */
+  .leaflet-popup-content-wrapper {
+    border-radius: 16px;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 16px 36px rgba(11, 31, 61, 0.22);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+  }
+  .leaflet-popup-content {
+    margin: 0;
+    line-height: 1.5;
+  }
+  .leaflet-popup-tip {
+    box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+  }
+  .ds-popup {
+    font-family: 'Inter', system-ui, sans-serif;
+    min-width: 260px;
+    max-width: 320px;
+  }
+  .popup-header {
+    padding: 14px 16px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .popup-header.high { background: linear-gradient(135deg, #DC2626, #EF4444); }
+  .popup-header.warning { background: linear-gradient(135deg, #EA580C, #F97316); }
+  .popup-header.resource { background: linear-gradient(135deg, #1E5FE0, #3B82F6); }
+  .popup-type {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .popup-badge {
+    background: rgba(255,255,255,0.25);
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .popup-body {
+    padding: 16px;
+    background: #fff;
+  }
+  .popup-body h4 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    color: var(--navy);
+    font-weight: 800;
+  }
+  .popup-body .ploc {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .popup-body .pdesc {
+    font-size: 13px;
+    color: var(--ink);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+  .popup-body .pact {
+    background: var(--blue-tint);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--blue-hover);
+    margin-bottom: 14px;
+    line-height: 1.45;
+  }
+  .popup-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    background: var(--blue);
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    transition: background 0.18s ease;
+  }
+  .popup-btn:hover {
+    background: var(--blue-hover);
+    color: #fff;
+  }
+
+  /* LATEST ALERTS PANEL */
+  .alerts-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .alerts-head h3 { margin: 0; font-size: 16px; color: var(--navy); font-weight: 800; }
+  #alertsList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 540px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  #alertsList::-webkit-scrollbar { width: 5px; }
+  #alertsList::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+
+  .alert-card {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    cursor: pointer;
+    background: #fff;
+    transition: all 0.2s var(--ease-out);
+    position: relative;
+  }
+  .alert-card:hover {
+    background: var(--blue-tint);
+    border-color: #BFDBFE;
+    transform: translateX(3px);
+  }
+  .alert-card.selected {
+    background: var(--blue-tint);
+    border-color: var(--blue);
+    box-shadow: 0 4px 14px rgba(30, 95, 224, 0.15);
+  }
+  .alert-dot {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+  .alert-body { flex: 1; min-width: 0; }
+  .alert-body strong {
+    display: block;
+    font-size: 13.5px;
+    color: var(--navy);
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .alert-body span {
+    display: block;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
+  .sev-tag {
+    display: inline-block;
+    margin-top: 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 99px;
+  }
+  .sev-critical { background: var(--red-tint); color: var(--red); }
+  .sev-warning { background: var(--orange-tint); color: var(--orange); }
+
+  /* SUBSCRIBE SECTION */
+  .subscribe { background: #fff; border-top: 1px solid var(--line); }
+  .sub-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 50px;
+    align-items: start;
+  }
+  @media (max-width: 880px) { .sub-inner { grid-template-columns: 1fr; } }
+  .sub-offline {
+    margin-top: 22px;
+    background: var(--blue-tint);
+    color: var(--blue-hover);
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 12px 16px;
+    border-radius: 10px;
+    max-width: 440px;
+    line-height: 1.5;
+    border: 1px solid #DBEAFE;
+  }
+  .sub-form {
+    background: var(--sky);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: var(--shadow-sm);
+  }
+  .sub-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+  .sub-field select, .sub-field input {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 11px 14px;
+    font-size: 14.5px;
+    font-family: inherit;
+    color: var(--ink);
+    background: #fff;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  }
+  .sub-field select:focus, .sub-field input:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(30, 95, 224, 0.15);
+  }
+  .sub-channels { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13.5px; color: var(--ink); }
+  .sub-check { display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+  .sub-note { margin: 0; font-size: 13px; color: var(--green); font-weight: 600; min-height: 18px; }
+
+  /* EMERGENCY STRIP */
+  .emergency { background: #fff; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .em-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+    padding: 34px 0;
+  }
+  .em-inner h3 { margin: 0 0 4px; font-size: 20px; color: var(--navy); }
+  .em-inner p { margin: 0; color: var(--ink-soft); font-size: 14px; }
+  .em-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+  .em-btns .btn { font-size: 14px; padding: 11px 18px; }
+  .em-numbers { display: flex; gap: 24px; margin-top: 14px; flex-wrap: wrap; }
+  .em-num { display: flex; flex-direction: column; transition: transform 0.15s ease; }
+  .em-num:hover { transform: translateY(-2px); }
+  .em-num-val { font-family: 'Manrope', sans-serif; font-weight: 800; font-size: 22px; color: var(--red); }
+  .em-num-label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+
+  /* RESOURCES GRID */
+  .resources { background: #fff; }
+  .res-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px;
+    margin-top: 12px;
+  }
+  @media (max-width: 960px) { .res-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .res-grid { grid-template-columns: 1fr; } }
+  .res-card {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px;
+    transition: all 0.22s var(--ease-out);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background: #fff;
+  }
+  .res-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow);
+    border-color: #CBD5E1;
+  }
+  .res-card .rtitle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    color: var(--navy);
+    font-size: 15px;
+    margin-bottom: 6px;
+  }
+  .res-card .rloc { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 12px; }
+  .res-meta { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--ink-soft); margin-bottom: 14px; }
+  .res-status { font-weight: 700; }
+  .status-open { color: var(--green); }
+  .res-card .btn { width: 100%; justify-content: center; font-size: 13px; padding: 9px; }
+
+  /* IMPACT SECTION */
+  .impact {
+    position: relative;
+    color: #fff;
+    background:
+      linear-gradient(rgba(9, 20, 40, 0.9), rgba(9, 20, 40, 0.92)),
+      url('https://images.unsplash.com/photo-1547683905-f686c993aae5?q=80&w=1800&auto=format&fit=crop') center/cover no-repeat;
+  }
+  .impact-inner {
+    display: grid;
+    grid-template-columns: 1fr 1.3fr;
+    gap: 40px;
+    align-items: center;
+  }
+  @media (max-width: 900px) { .impact-inner { grid-template-columns: 1fr; } }
+  .impact h2 { color: #fff; }
+  .impact p { color: #C8D4E8; line-height: 1.6; }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 700px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+  .stat-card {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 14px;
+    padding: 22px 14px;
+    text-align: center;
+    backdrop-filter: blur(6px);
+    transition: transform 0.2s ease;
+  }
+  .stat-card:hover { transform: translateY(-3px); }
+  .stat-icon { font-size: 20px; margin-bottom: 8px; }
+  .stat-num { font-size: 28px; font-weight: 800; font-family: 'Manrope', sans-serif; }
+  .stat-label { font-size: 12.5px; color: #C8D4E8; margin-top: 4px; }
+
+  /* ABOUT / TEAM */
+  .about-team { background: #fff; }
+  .team-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 760px) { .team-grid { grid-template-columns: 1fr; } }
+  .team-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 24px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .team-card:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+  .team-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--blue-tint);
+    color: var(--blue);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+  .team-card h4 { margin: 0 0 6px; font-size: 16px; color: var(--navy); }
+  .team-card p { margin: 0; font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; }
+
+  /* TESTIMONIALS */
+  .testimonials { background: var(--sky); }
+  .test-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 900px) { .test-grid { grid-template-columns: 1fr; } }
+  .test-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+  .test-card p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--ink); }
+  .test-who { display: flex; align-items: center; gap: 10px; }
+  .test-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--navy);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  .test-who strong { font-size: 13.5px; color: var(--navy); display: block; }
+  .test-who span { font-size: 12px; color: var(--ink-soft); }
+
+  /* HOW IT WORKS */
+  .howworks { background: #fff; }
+  .hw-grid {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 44px;
+    position: relative;
+  }
+  .hw-step { flex: 1; text-align: left; position: relative; }
+  .hw-num {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: var(--blue);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 12px rgba(30, 95, 224, 0.28);
+  }
+  .hw-step h4 { margin: 0 0 6px; font-size: 16px; color: var(--navy); }
+  .hw-step p { margin: 0; font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+  .hw-arrow { position: absolute; top: 19px; right: -24px; color: #B9C6DA; font-size: 18px; }
+  @media (max-width: 820px) {
+    .hw-grid { flex-direction: column; gap: 24px; }
+    .hw-arrow { display: none; }
+  }
+
+  /* FAQ */
+  .faq { background: var(--sky); }
+  .faq-list { max-width: 720px; display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+  .faq-item {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 22px;
+    background: #fff;
+    transition: border-color 0.2s ease;
+  }
+  .faq-item summary {
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--navy);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    user-select: none;
+  }
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-chev { color: var(--blue); font-size: 18px; font-weight: 700; flex: none; transition: transform 0.2s ease; }
+  .faq-item[open] .faq-chev { transform: rotate(45deg); }
+  .faq-item p { margin: 12px 0 0; font-size: 14px; line-height: 1.6; color: var(--ink-soft); }
+
+  /* MISSION CTA */
+  .mission { background: #fff; }
+  .mission-card {
+    background: linear-gradient(120deg, var(--navy) 0%, var(--navy-2) 60%, #123166 100%);
+    border-radius: 22px;
+    padding: 56px;
+    color: #fff;
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 34px;
+    align-items: center;
+    overflow: hidden;
+    position: relative;
+  }
+  @media (max-width: 820px) { .mission-card { grid-template-columns: 1fr; padding: 40px 24px; } }
+  .mission-card h2 { color: #fff; font-size: clamp(24px, 3vw, 32px); margin: 0 0 12px; }
+  .mission-card p { color: #C8D4E8; margin: 0 0 24px; max-width: 460px; line-height: 1.6; }
+  .mission-photo { border-radius: 16px; overflow: hidden; height: 220px; }
+  .mission-photo img { height: 100%; width: 100%; object-fit: cover; }
+
+  /* FOOTER */
+  footer { background: var(--navy-dark); color: #C8D4E8; padding: 56px 0 24px; }
+  .foot-top {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr 1fr;
+    gap: 30px;
+    padding-bottom: 34px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  @media (max-width: 760px) { .foot-top { grid-template-columns: 1fr; gap: 26px; } }
+  .foot-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .foot-brand .brand-name { color: #fff; font-size: 17px; font-weight: 800; }
+  footer p { font-size: 13.5px; line-height: 1.6; color: #9CADC6; max-width: 280px; }
+  footer h5 { color: #fff; font-size: 13px; letter-spacing: 0.04em; margin: 0 0 14px; }
+  .foot-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .foot-links a { font-size: 13.5px; color: #B7C4D9; transition: color 0.15s ease; }
+  .foot-links a:hover { color: #fff; }
+  .foot-social { display: flex; gap: 10px; }
+  .foot-social a {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #CBD5E1;
+    transition: all 0.18s ease;
+  }
+  .foot-social a:hover { background: var(--blue); color: #fff; transform: translateY(-2px); }
+  .foot-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-top: 22px;
+    font-size: 12.5px;
+    color: #8FA0BB;
+  }
+  .foot-sources { font-size: 12px; color: #7C8CA8; margin-top: 10px; max-width: 280px; }
+  .foot-legal a { color: #B7C4D9; }
+  .foot-legal a:hover { color: #fff; }
+
+  /* TOAST NOTIFICATION */
+  #toastContainer {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+  }
+  .toast {
+    background: #0B1F3D;
+    color: #fff;
+    padding: 12px 18px;
+    border-radius: 12px;
+    font-size: 13.5px;
+    font-weight: 600;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.15);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: auto;
+    animation: toastSlideIn 0.25s var(--ease-out);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  @keyframes toastSlideIn {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  /* HARDWARE ACCELERATED REVEAL */
+  .reveal {
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity 0.5s var(--ease-out), transform 0.5s var(--ease-out);
+    will-change: transform, opacity;
+  }
+  .reveal.in {
+    opacity: 1;
+    transform: none;
+  }
+  
+  :focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+  }
+</style>
+</head>
+<body>
+
+<!-- NAVBAR -->
+<header class="nav" id="siteNav">
+  <div class="nav-inner">
+    <a href="#home" class="brand">
+      <svg class="brand-mark" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M24 3L41 10V22C41 33.5 34 41.8 24 45C14 41.8 7 33.5 7 22V10L24 3Z" fill="#1E5FE0"/>
+        <path d="M24 8L36 13V22.5C36 31 30.5 37.2 24 39.7C17.5 37.2 12 31 12 22.5V13L24 8Z" fill="#0B1F3D" fill-opacity="0.18"/>
+        <path d="M17.5 24.5L21.7 28.7L30.5 19.5" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="brand-text">
+        <span class="brand-name">DisasterShield</span>
+        <span class="brand-tag">Prepare · Respond · Rebuild</span>
+      </span>
+    </a>
+    <nav aria-label="Primary">
+      <ul class="nav-links">
+        <li><a href="#home" class="active">Home</a></li>
+        <li><a href="#livemap">Live Map</a></li>
+        <li><a href="#alerts">Alerts</a></li>
+        <li><a href="#resources">Resources</a></li>
+        <li><a href="#about">About</a></li>
+        <li><a href="#faq">FAQ</a></li>
+      </ul>
+    </nav>
+    <div class="nav-right">
+      <div class="lang-switch">
+        <button class="icon-btn lang-btn" id="langBtn" aria-haspopup="listbox" aria-expanded="false" aria-label="Choose language" title="Select Language">🌐</button>
+        <ul class="lang-menu" id="langMenu" role="listbox">
+          <li role="option" data-lang="en" class="active">English</li>
+          <li role="option" data-lang="hi">हिंदी</li>
+          <li role="option" data-lang="bn">বাংলা</li>
+          <li role="option" data-lang="ta">தமிழ்</li>
+        </ul>
+      </div>
+      <button class="icon-btn" id="notifBellBtn" aria-label="Notifications" title="Emergency Alerts">🔔<span class="dot"></span></button>
+      <div class="nav-auth">
+        <a href="#alerts" class="btn btn-ghost">Get Alerts</a>
+        <a href="#livemap" class="btn btn-primary">Open Map</a>
+      </div>
+      <button class="hamburger" id="hamburgerBtn" aria-label="Open menu" aria-expanded="false">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+  <div id="mobileMenu">
+    <a href="#home">Home</a>
+    <a href="#livemap">Live Map</a>
+    <a href="#alerts">Alerts</a>
+    <a href="#resources">Resources</a>
+    <a href="#about">About</a>
+    <a href="#faq">FAQ</a>
+    <div class="mm-auth">
+      <a href="#alerts" class="btn btn-ghost">Get Alerts</a>
+      <a href="#livemap" class="btn btn-primary">Open Map</a>
+    </div>
+    <div class="mm-lang">
+      <span class="mm-lang-label">Language</span>
+      <div class="mm-lang-opts">
+        <button data-lang="en" class="active">EN</button>
+        <button data-lang="hi">हिं</button>
+        <button data-lang="bn">বাং</button>
+        <button data-lang="ta">தமி</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero" id="home">
+  <div class="hero-inner">
+    <div>
+      <div class="hero-label">REAL-TIME DISASTER MANAGEMENT &amp; RESPONSE</div>
+      <h1>Real-Time Information.<br>Faster Response.<br><span class="accent">Safer Communities.</span></h1>
+      <p>Get real-time alerts, track active disasters, explore live hazard zones, and access nearby emergency resources across India — all in one unified, responsive platform.</p>
+      <div class="hero-ctas">
+        <a href="#livemap" class="btn btn-primary">Explore Live Map →</a>
+        <a href="#alerts" class="btn btn-outline" id="watchDemoBtn">🔔 Subscribe to Alerts</a>
+      </div>
+    </div>
+    <div class="hero-map-card">
+      <div id="heroMap" role="region" aria-label="Preview map of Uttarakhand disaster hotspots and relief facilities"></div>
+      <div class="map-legend">
+        <div class="lg-row"><span class="lg-dot" style="background:var(--red)"></span>Critical Alert</div>
+        <div class="lg-row"><span class="lg-dot" style="background:var(--orange)"></span>Warning Zone</div>
+        <div class="lg-row"><span class="lg-dot" style="background:var(--green)"></span>Safe Sector</div>
+        <div class="lg-row"><span class="lg-dot" style="background:var(--blue)"></span>Relief Depot</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="section-pad features" id="features">
+  <div class="wrap">
+    <div class="feat-head">
+      <div>
+        <div class="eyebrow">Key Capabilities</div>
+        <h2 class="h2" style="margin-bottom:6px;max-width:540px;">Unified disaster mitigation and emergency coordination</h2>
+        <p class="lede">From predictive early warnings to on-ground rescue routing, our system equips authorities, responders, and citizens with actionable intelligence.</p>
+      </div>
+      <a href="#livemap" class="btn btn-primary">View Hazard Dashboard →</a>
+    </div>
+    <div class="feat-grid">
+      <div class="feat-card reveal">
+        <div class="feat-icon" style="background:var(--red-tint);color:var(--red);">⚠️</div>
+        <h3>Live Hazard Alerts</h3>
+        <p>Instant push and SMS warnings for floods, landslides, cyclones, and seismic activity.</p>
+        <span class="feat-arrow">Explore alerts →</span>
+      </div>
+      <div class="feat-card reveal">
+        <div class="feat-icon" style="background:var(--blue-tint);color:var(--blue);">🗺️</div>
+        <h3>Interactive GIS Mapping</h3>
+        <p>High-resolution satellite imagery, topographic overlays, and dynamic impact buffers.</p>
+        <span class="feat-arrow">Open GIS layers →</span>
+      </div>
+      <div class="feat-card reveal">
+        <div class="feat-icon" style="background:var(--green-tint);color:var(--green);">📍</div>
+        <h3>Resource Allocation</h3>
+        <p>Locate verified emergency shelters, field hospitals, blood banks, and food distribution centers.</p>
+        <span class="feat-arrow">Find resources →</span>
+      </div>
+      <div class="feat-card reveal">
+        <div class="feat-icon" style="background:var(--purple-tint);color:var(--purple);">🌧️</div>
+        <h3>Predictive Early Warning</h3>
+        <p>Continuous telemetry from meteorology sensors to project flash floods and storm paths.</p>
+        <span class="feat-arrow">View analytics →</span>
+      </div>
+      <div class="feat-card reveal">
+        <div class="feat-icon" style="background:var(--orange-tint);color:var(--orange);">👥</div>
+        <h3>Agency Interoperability</h3>
+        <p>Direct communication bridge between NDRF, state SDRF teams, and community volunteers.</p>
+        <span class="feat-arrow">Field response →</span>
+      </div>
+      <div class="feat-card reveal">
+        <div class="feat-icon" style="background:var(--teal-tint);color:var(--teal);">📊</div>
+        <h3>Disaster Telemetry &amp; Stats</h3>
+        <p>Real-time situation reports and post-disaster assessment feeds for rapid rehabilitation.</p>
+        <span class="feat-arrow">Incident reports →</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- LIVE DISASTER MAP -->
+<section class="section-pad live-map-section" id="livemap">
+  <div class="wrap">
+    <div class="lm-head">
+      <div class="eyebrow">Real-Time GIS Operations</div>
+      <h2 class="h2">Interactive Disaster &amp; Hazard Radar</h2>
+      <p class="lede">Track active emergencies, hazard radiuses, and live relief facilities across India with instant satellite and terrain switching.</p>
+    </div>
+    
+    <div class="lm-layout">
+      <!-- FILTER PANEL -->
+      <div class="lm-panel" id="filterPanel">
+        <h4 style="margin:0 0 12px;font-size:14px;color:var(--navy);font-weight:700;">Filter Incidents</h4>
+        <button class="cat-btn active" data-filter="all"><span class="cn">🧭 All Categories</span><span class="cat-count" id="count-all">8</span></button>
+        <button class="cat-btn" data-filter="flood"><span class="cn">🌊 Floods</span><span class="cat-count" id="count-flood">2</span></button>
+        <button class="cat-btn" data-filter="landslide"><span class="cn">⛰️ Landslides</span><span class="cat-count" id="count-landslide">1</span></button>
+        <button class="cat-btn" data-filter="cyclone"><span class="cn">🌀 Cyclones</span><span class="cat-count" id="count-cyclone">1</span></button>
+        <button class="cat-btn" data-filter="earthquake"><span class="cn">📈 Earthquakes</span><span class="cat-count" id="count-earthquake">1</span></button>
+        <button class="cat-btn" data-filter="wildfire"><span class="cn">🔥 Wildfires</span><span class="cat-count" id="count-wildfire">1</span></button>
+        <button class="cat-btn" data-filter="resource"><span class="cn">🏥 Relief Hubs</span><span class="cat-count" id="count-resource">3</span></button>
+        
+        <div style="margin-top:auto;padding-top:16px;border-top:1px solid var(--line);">
+          <button class="btn btn-ghost" id="resetViewBtn" style="width:100%;justify-content:center;font-size:13px;">
+            ⟲ Center India View
+          </button>
+        </div>
+      </div>
+
+      <!-- MAIN MAP CARD -->
+      <div id="mainMapCard">
+        <!-- DEDICATED HEADER BAR (ABOVE MAP CANVAS — NO OVERLAPPING THE +/- BUTTONS) -->
+        <div class="map-card-header">
+          <div class="map-layers">
+            <button id="toggleStreet" class="active" title="High-Contrast Humanitarian &amp; Road Map">🗺️ Street</button>
+            <button id="toggleTopo" title="Topographic Elevation &amp; Relief Shading">⛰️ Topo Relief</button>
+            <button id="toggleSat" title="High-Res Satellite Photography">🛰️ Satellite</button>
+          </div>
+          <div class="map-actions">
+            <button class="map-action-btn" id="locateMeBtn" title="Zoom to your current GPS position">
+              📍 My Location
+            </button>
+            <button class="map-action-btn" id="fitBoundsBtn" title="Fit all active incident markers">
+              🔍 Fit All
+            </button>
+          </div>
+        </div>
+
+        <!-- LEAFLET MAP CANVAS WRAPPER -->
+        <div class="map-canvas-wrap">
+          <div id="mainMap" role="region" aria-label="Interactive nationwide disaster map"></div>
+
+          <!-- LIVE STATUS PILL -->
+          <div class="map-status-pill">
+            <span class="live-indicator"></span>
+            <span id="mapStatusText">8 Active Markers • Live Feed Active</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- LATEST ALERTS SIDEBAR -->
+      <div class="lm-panel" id="alertsPanel">
+        <div class="alerts-head">
+          <h3>Active Advisories</h3>
+          <span style="font-size:12px;font-weight:700;color:var(--blue);" id="activeAlertCount">5 Incidents</span>
+        </div>
+        <div id="alertsList"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ALERT SUBSCRIPTION -->
+<section class="section-pad subscribe" id="alerts">
+  <div class="wrap sub-inner">
+    <div>
+      <div class="eyebrow">Direct Citizen Alerts</div>
+      <h2 class="h2" style="max-width:480px;">Receive early warnings straight to your phone</h2>
+      <p class="lede">Select your district to receive critical weather advisories, flood warnings, and evacuation routes via SMS and push notifications.</p>
+      <div class="sub-offline">📶 <strong>Low Connectivity Protocol:</strong> SMS alert dispatch operates continuously even during 4G/5G data outages.</div>
+    </div>
+    <form class="sub-form" id="subscribeForm">
+      <label class="sub-field">
+        <span>Target District / Region</span>
+        <select required id="subRegion">
+          <option value="">Select your district</option>
+          <option>Dehradun &amp; Rishikesh, Uttarakhand</option>
+          <option>Guwahati &amp; Brahmaputra Valley, Assam</option>
+          <option>Shimla &amp; Kullu, Himachal Pradesh</option>
+          <option>Coastal Odisha &amp; Andhra Pradesh</option>
+          <option>Chennai &amp; Coastal Tamil Nadu</option>
+          <option>Delhi NCR &amp; Northern Plains</option>
+          <option>Mumbai &amp; Konkan Coast</option>
+        </select>
+      </label>
+      <label class="sub-field">
+        <span>Mobile Number (for SMS &amp; Flash Broadcast)</span>
+        <input type="tel" id="subPhone" placeholder="+91 98765 43210" required>
+      </label>
+      <label class="sub-field">
+        <span>Email Address (for detailed bulletin)</span>
+        <input type="email" id="subEmail" placeholder="responder@example.com">
+      </label>
+      <div class="sub-channels">
+        <label class="sub-check"><input type="checkbox" checked> Instant SMS</label>
+        <label class="sub-check"><input type="checkbox" checked> Mobile Push</label>
+        <label class="sub-check"><input type="checkbox"> Email Bulletins</label>
+      </div>
+      <button type="submit" class="btn btn-primary" style="justify-content:center;font-size:15px;">Subscribe to Emergency Feeds →</button>
+      <p class="sub-note" id="subNote"></p>
+    </form>
+  </div>
+</section>
+
+<!-- EMERGENCY STRIP -->
+<section class="emergency">
+  <div class="wrap em-inner">
+    <div>
+      <h3>Facing an immediate emergency?</h3>
+      <p>Direct lines to verified national disaster helplines and quick response stations.</p>
+      <div class="em-numbers">
+        <a href="tel:112" class="em-num"><span class="em-num-val">112</span><span class="em-num-label">National Emergency</span></a>
+        <a href="tel:1078" class="em-num"><span class="em-num-val">1078</span><span class="em-num-label">NDMA Disaster Line</span></a>
+        <a href="tel:108" class="em-num"><span class="em-num-val">108</span><span class="em-num-label">Medical Ambulance</span></a>
+      </div>
+    </div>
+    <div class="em-btns">
+      <a href="#resources" class="btn btn-red">🚨 Locate Nearby Shelter</a>
+      <button class="btn btn-ghost" id="reportIncidentBtn">📝 Report Field Incident</button>
+      <a href="tel:112" class="btn btn-ghost">📞 Speed Dial 112</a>
+    </div>
+  </div>
+</section>
+
+<!-- RESOURCES -->
+<section class="section-pad resources" id="resources">
+  <div class="wrap">
+    <div class="eyebrow">Verified Field Facilities</div>
+    <h2 class="h2" style="max-width:560px;">Emergency Shelters, Relief Bases &amp; Trauma Units</h2>
+    <p class="lede" style="margin-bottom:30px;">Real-time bed availability, medical supply inventory, and rapid routing instructions.</p>
+    <div class="res-grid" id="resourceCardsGrid">
+      <div class="res-card">
+        <div>
+          <div class="rtitle">🏠 Community Relief Center</div>
+          <div class="rloc">Dehradun, Uttarakhand · 1.8 km away</div>
+          <div class="res-meta"><span>Capacity: 72%</span><span class="res-status status-open">● Open</span></div>
+        </div>
+        <button class="btn btn-ghost direct-btn" data-lat="30.3255" data-lng="78.0410" data-name="Community Relief Center Dehradun">Get Directions →</button>
+      </div>
+      <div class="res-card">
+        <div>
+          <div class="rtitle">🏥 Doon District Trauma Center</div>
+          <div class="rloc">Dehradun, Uttarakhand · 3.2 km away</div>
+          <div class="res-meta"><span>Capacity: 54%</span><span class="res-status status-open">● Open</span></div>
+        </div>
+        <button class="btn btn-ghost direct-btn" data-lat="30.3165" data-lng="78.0322" data-name="Doon District Hospital">Get Directions →</button>
+      </div>
+      <div class="res-card">
+        <div>
+          <div class="rtitle">💧 Emergency Water &amp; Ration Depot</div>
+          <div class="rloc">Guwahati, Assam · 0.6 km away</div>
+          <div class="res-meta"><span>Capacity: 88%</span><span class="res-status status-open">● Open</span></div>
+        </div>
+        <button class="btn btn-ghost direct-btn" data-lat="26.1500" data-lng="91.7500" data-name="Guwahati Relief Depot">Get Directions →</button>
+      </div>
+      <div class="res-card">
+        <div>
+          <div class="rtitle">🚑 SDRF Emergency Staging Post</div>
+          <div class="rloc">Shimla, Himachal Pradesh · 2.4 km away</div>
+          <div class="res-meta"><span>Capacity: 40%</span><span class="res-status status-open">● Open</span></div>
+        </div>
+        <button class="btn btn-ghost direct-btn" data-lat="31.1000" data-lng="77.1600" data-name="Shimla Response Post">Get Directions →</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- IMPACT -->
+<section class="section-pad impact" id="about">
+  <div class="wrap impact-inner">
+    <div>
+      <div class="eyebrow" style="color:#9DC1FF;">Proven Community Resilience</div>
+      <h2 class="h2">Stronger communities.<br>Faster emergency recovery.</h2>
+      <p>Through robust satellite feeds, verified field coordinators, and open-access public alerts, we help communities prepare and overcome severe climate emergencies.</p>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card reveal"><div class="stat-icon">👥</div><div class="stat-num" data-target="2.5" data-suffix="M+">0</div><div class="stat-label">Citizens Alerted</div></div>
+      <div class="stat-card reveal"><div class="stat-icon">⚠️</div><div class="stat-num" data-target="1.2" data-suffix="K+">0</div><div class="stat-label">Threats Tracked</div></div>
+      <div class="stat-card reveal"><div class="stat-icon">🏠</div><div class="stat-num" data-target="850" data-suffix="+">0</div><div class="stat-label">Relief Centers</div></div>
+      <div class="stat-card reveal"><div class="stat-icon">🛡️</div><div class="stat-num" data-target="98.4" data-suffix="%">0</div><div class="stat-label">Verified Accuracy</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ABOUT / TEAM -->
+<section class="section-pad about-team">
+  <div class="wrap">
+    <div class="eyebrow">Institutional Backing</div>
+    <h2 class="h2" style="max-width:560px;">Built in synergy with state and national agencies</h2>
+    <p class="lede" style="margin-bottom:34px;">DisasterShield aggregates data directly from IMD radars, NDMA advisories, and certified local field responders for dependable crisis handling.</p>
+    <div class="team-grid">
+      <div class="team-card reveal">
+        <div class="team-avatar">DS</div>
+        <h4>Disaster Mitigation Wing</h4>
+        <p>Coordinates directly with district collectors and emergency operations centers.</p>
+      </div>
+      <div class="team-card reveal">
+        <div class="team-avatar">GD</div>
+        <h4>GIS &amp; Remote Sensing</h4>
+        <p>Calculates dynamic flood inundation models, slope risks, and evacuation paths.</p>
+      </div>
+      <div class="team-card reveal">
+        <div class="team-avatar">CO</div>
+        <h4>First Responder Network</h4>
+        <p>Mobilizes verified community volunteers for shelter food supplies and medical relief.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIALS -->
+<section class="section-pad testimonials">
+  <div class="wrap">
+    <div class="eyebrow">Field Testimonials</div>
+    <h2 class="h2" style="max-width:520px;">Trusted when seconds make the difference</h2>
+    <div class="test-grid">
+      <div class="test-card reveal">
+        <p>"The flash flood warning was delivered 50 minutes before the river overflowed into our village. We evacuated all families and livestock in time."</p>
+        <div class="test-who"><span class="test-avatar">R</span><div><strong>Resident</strong><span>Guwahati, Assam</span></div></div>
+      </div>
+      <div class="test-card reveal">
+        <p>"The live resource map showed us exactly which relief hubs had empty capacity, avoiding logjams and speeding up medical aid."</p>
+        <div class="test-who"><span class="test-avatar">V</span><div><strong>Relief Volunteer</strong><span>Shimla, Himachal Pradesh</span></div></div>
+      </div>
+      <div class="test-card reveal">
+        <p>"The satellite layer and hazard radius circles make briefing field search and rescue squads straightforward and fast."</p>
+        <div class="test-who"><span class="test-avatar">D</span><div><strong>District Operations Coordinator</strong><span>Dehradun, Uttarakhand</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="section-pad howworks">
+  <div class="wrap">
+    <div class="eyebrow">Operational Sequence</div>
+    <h2 class="h2">Stay protected in 4 simple steps</h2>
+    <div class="hw-grid">
+      <div class="hw-step reveal">
+        <div class="hw-num">1</div>
+        <h4>Receive Alert</h4>
+        <p>Instant SMS &amp; map broadcast upon threat detection.</p>
+        <span class="hw-arrow">→</span>
+      </div>
+      <div class="hw-step reveal">
+        <div class="hw-num">2</div>
+        <h4>Inspect Map</h4>
+        <p>View active hazard radiuses and safe zones in real time.</p>
+        <span class="hw-arrow">→</span>
+      </div>
+      <div class="hw-step reveal">
+        <div class="hw-num">3</div>
+        <h4>Locate Resources</h4>
+        <p>Navigate to nearest open shelter or medical station.</p>
+        <span class="hw-arrow">→</span>
+      </div>
+      <div class="hw-step reveal">
+        <div class="hw-num">4</div>
+        <h4>Stay Secure</h4>
+        <p>Follow automated safety updates until the hazard passes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="section-pad faq" id="faq">
+  <div class="wrap">
+    <div class="eyebrow">Clarifications</div>
+    <h2 class="h2" style="max-width:480px;">Frequently Asked Questions</h2>
+    <div class="faq-list">
+      <details class="faq-item" open>
+        <summary>How frequently are map hazard markers updated?<span class="faq-chev">＋</span></summary>
+        <p>Hazard telemetry and active alert markers update every 60 seconds from satellite telemetry, meteorological alerts, and verified district command reports.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Does the alert system function during cellular internet failure?<span class="faq-chev">＋</span></summary>
+        <p>Yes. Our critical alert engine automatically falls back to cellular SMS broadcasts, which operate across standard 2G/GSM voice channels even during mobile data cutoffs.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Are resource center details confirmed by field teams?<span class="faq-chev">＋</span></summary>
+        <p>Yes. Every shelter, relief depot, and trauma facility is validated with local authorities and designated emergency coordinators.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How do I register an NGO or local hospital on the map?<span class="faq-chev">＋</span></summary>
+        <p>Click "Report Field Incident" or contact our GIS emergency desk below to get verified and listed on the national resource grid.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- MISSION CTA -->
+<section class="section-pad mission" id="contact">
+  <div class="wrap">
+    <div class="mission-card">
+      <div>
+        <h2>Disasters cannot be prevented, but loss of life can.</h2>
+        <p>Join thousands of community responders, NGOs, and district officials building resilient infrastructure.</p>
+        <a href="#alerts" class="btn btn-white">Join Citizen Network →</a>
+      </div>
+      <div class="mission-photo">
+        <img src="https://images.unsplash.com/photo-1593113598332-cd288d649433?q=80&w=900&auto=format&fit=crop" alt="Emergency responders coordinating field assistance">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <div>
+        <div class="foot-brand">
+          <svg width="30" height="30" viewBox="0 0 48 48" fill="none"><path d="M24 3L41 10V22C41 33.5 34 41.8 24 45C14 41.8 7 33.5 7 22V10L24 3Z" fill="#1E5FE0"/><path d="M17.5 24.5L21.7 28.7L30.5 19.5" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="brand-name">DisasterShield</span>
+        </div>
+        <p>Real-Time Disaster Mitigation, Early Warning &amp; Citizen Relief Network.</p>
+        <p class="foot-sources">Data sources: IMD, NDMA, State Disaster Management Authorities &amp; Verified Telemetry.</p>
+      </div>
+      <div>
+        <h5>NAVIGATION</h5>
+        <ul class="foot-links">
+          <li><a href="#home">Home Overview</a></li>
+          <li><a href="#livemap">Live GIS Radar</a></li>
+          <li><a href="#alerts">Citizen Alerts</a></li>
+          <li><a href="#resources">Shelters &amp; Resources</a></li>
+          <li><a href="#about">About System</a></li>
+          <li><a href="#faq">Operational FAQ</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>24/7 HELPLINE</h5>
+        <ul class="foot-links">
+          <li><a href="mailto:ops@disastershield.org">ops@disastershield.org</a></li>
+          <li><a href="tel:112">National Emergency: 112</a></li>
+          <li><a href="tel:1078">NDMA Helpline: 1078</a></li>
+        </ul>
+        <h5 style="margin-top:20px;">CONNECT</h5>
+        <div class="foot-social">
+          <a href="#" aria-label="X">𝕏</a>
+          <a href="#" aria-label="Facebook">f</a>
+          <a href="#" aria-label="Instagram">◎</a>
+          <a href="#" aria-label="LinkedIn">in</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 DisasterShield Platform. All rights reserved.</span>
+      <span class="foot-legal"><a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a></span>
+      <span>Live operational demonstration interface.</span>
+    </div>
+  </div>
+</footer>
+
+<!-- TOAST NOTIFICATION CONTAINER -->
+<div id="toastContainer"></div>
+
+<!-- LEAFLET JS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+<script>
+/* ============================================================
+   DISASTER DATA & RELIEF RESOURCES
+   ============================================================ */
+const DISASTERS = [
+  {
+    id: 1,
+    type: 'flood',
+    title: 'Severe Riverine Flood Alert',
+    lat: 26.1800,
+    lng: 91.7500,
+    location: 'Guwahati & Kamrup, Assam',
+    severity: 'high',
+    timestamp: 'Just now (Updated)',
+    description: 'Brahmaputra river level exceeded warning mark by 1.4m. Low-lying wards under inundation threat.',
+    radius: 75000,
+    recommendedAction: 'Evacuate to elevated shelters. Avoid highway NH-27 transit corridor.'
+  },
+  {
+    id: 2,
+    type: 'landslide',
+    title: 'Major Landslide Threat & Road Block',
+    lat: 31.1048,
+    lng: 77.1734,
+    location: 'Shimla-Kinnaur Highway, Himachal Pradesh',
+    severity: 'warning',
+    timestamp: '25 mins ago',
+    description: 'Continuous torrential rains have saturated hillside soil. Rockfall risk on upper bypass.',
+    radius: 45000,
+    recommendedAction: 'Halt non-essential hill transit. Use designated bypass corridors.'
+  },
+  {
+    id: 3,
+    type: 'cyclone',
+    title: 'Severe Cyclonic Storm Warning',
+    lat: 18.2000,
+    lng: 86.4000,
+    location: 'Bay of Bengal — Coastal Odisha',
+    severity: 'high',
+    timestamp: '1 hour ago',
+    description: 'Deep depression intensifying into severe cyclone with sustained wind gusts up to 110 km/h.',
+    radius: 120000,
+    recommendedAction: 'Complete beach-side evacuation. Fishermen advised total suspension of offshore activity.'
+  },
+  {
+    id: 4,
+    type: 'earthquake',
+    title: 'Seismic Tremor Recorded (M 4.6)',
+    lat: 28.7041,
+    lng: 77.1025,
+    location: 'Delhi NCR & Haryana Border',
+    severity: 'warning',
+    timestamp: '2 hours ago',
+    description: 'Moderate depth tremor recorded with subsequent localized tremors. Structural inspections underway.',
+    radius: 35000,
+    recommendedAction: 'Inspect older masonry structures. Avoid elevators and congested stairwells.'
+  },
+  {
+    id: 5,
+    type: 'wildfire',
+    title: 'Forest Fire Ridge Outbreak',
+    lat: 30.0668,
+    lng: 79.0193,
+    location: 'Chamoli Reserve Forest, Uttarakhand',
+    severity: 'warning',
+    timestamp: '3 hours ago',
+    description: 'High wind velocity causing rapid forest floor fire spread across upper ridge perimeter.',
+    radius: 30000,
+    recommendedAction: 'Maintain buffer perimeter. Report new smoke plumes to forest range control.'
+  },
+  {
+    id: 6,
+    type: 'flood',
+    title: 'Urban Inundation Advisory',
+    lat: 13.0827,
+    lng: 80.2707,
+    location: 'Chennai Coastal Basin, Tamil Nadu',
+    severity: 'warning',
+    timestamp: '4 hours ago',
+    description: 'Heavy precipitation causing localized arterial road waterlogging. Storm drains discharging at peak.',
+    radius: 28000,
+    recommendedAction: 'Follow traffic police diversions. Stay clear of submerged electrical substations.'
+  }
+];
+
+const RESOURCES = [
+  {
+    id: 101,
+    type: 'resource',
+    category: 'shelter',
+    name: 'Doon Central Relief Center',
+    lat: 30.3255,
+    lng: 78.0410,
+    location: 'Dehradun, Uttarakhand',
+    status: 'Open · 72% Capacity',
+    services: 'Hot Food, Emergency Beds, Clean Water, First Aid'
+  },
+  {
+    id: 102,
+    type: 'resource',
+    category: 'hospital',
+    name: 'Doon District Trauma Center',
+    lat: 30.3165,
+    lng: 78.0322,
+    location: 'Dehradun, Uttarakhand',
+    status: 'Open · 24/7 ER Ready',
+    services: 'Critical Trauma Care, Ambulance Fleet, Blood Bank'
+  },
+  {
+    id: 103,
+    type: 'resource',
+    category: 'relief',
+    name: 'Guwahati Northeast Relief Depot',
+    lat: 26.1500,
+    lng: 91.7500,
+    location: 'Guwahati, Assam',
+    status: 'Open · Active Dispatch',
+    services: 'Ration Packets, Water Purification, Inflatable Boats'
+  }
+];
+
+const TYPE_EMOJI = {
+  flood: '🌊',
+  landslide: '⛰️',
+  cyclone: '🌀',
+  earthquake: '📈',
+  wildfire: '🔥',
+  resource: '🏥',
+  shelter: '🏠',
+  hospital: '🏥',
+  relief: '📦'
+};
+
+const SEV_COLOR = {
+  high: '#DC2626',
+  warning: '#EA580C',
+  resource: '#1E5FE0',
+  safe: '#17924E'
+};
+
+/* Toast Notification Utility */
+function showToast(message, icon = 'ℹ️') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.innerHTML = `<span style="font-size:16px;">${icon}</span><span>${message}</span>`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(10px)';
+    setTimeout(() => toast.remove(), 260);
+  }, 3400);
+}
+
+/* ============================================================
+   100% FREE TILE PROVIDERS (ZERO WATERMARKS, NO API KEYS)
+   ============================================================ */
+// 1. Street Map: Humanitarian OpenStreetMap (High contrast, crisis & relief roads, no watermarks)
+const streetTileUrl = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+const streetTileOptions = {
+  subdomains: ['a', 'b'],
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="https://www.hotosm.org/">HOT</a>'
+};
+
+// 2. Topographic & Relief Shading: Esri World Topo Map (Clean elevations, zero watermarks)
+const topoTileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
+const topoTileOptions = {
+  maxZoom: 18,
+  attribution: 'Tiles &copy; Esri &mdash; Topographic Base'
+};
+
+// 3. Satellite: Esri World Imagery (High-res photographic view, zero watermarks)
+const satTileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const satTileOptions = {
+  maxZoom: 18,
+  attribution: 'Tiles &copy; Esri &mdash; World Imagery'
+};
+
+/* Create Custom Animated Pin Icon */
+function createCustomMarker(emoji, color, isPulse = false) {
+  return L.divIcon({
+    className: 'custom-marker',
+    html: `
+      <div class="marker-pin ${isPulse ? 'pulse' : ''}" style="background:${color};">
+        ${emoji}
+      </div>
+    `,
+    iconSize: [38, 38],
+    iconAnchor: [19, 19],
+    popupAnchor: [0, -20]
+  });
+}
+
+/* ============================================================
+   HERO MINI MAP INITIALIZATION
+   ============================================================ */
+const heroMap = L.map('heroMap', {
+  zoomControl: true,
+  attributionControl: false,
+  scrollWheelZoom: false,
+  dragging: true
+}).setView([30.22, 78.35], 8);
+
+L.tileLayer(streetTileUrl, streetTileOptions).addTo(heroMap);
+
+// Hero sample markers
+L.circle([30.12, 78.85], { radius: 32000, color: '#DC2626', fillColor: '#DC2626', fillOpacity: 0.22, weight: 1.5 }).addTo(heroMap);
+L.circle([30.55, 78.18], { radius: 24000, color: '#EA580C', fillColor: '#EA580C', fillOpacity: 0.22, weight: 1.5 }).addTo(heroMap);
+
+L.marker([30.12, 78.85], { icon: createCustomMarker('🌊', '#DC2626', true) }).addTo(heroMap).bindPopup(`
+  <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
+    <strong style="color:#DC2626;font-size:13.5px;">Flash Flood Zone</strong><br>
+    <span style="font-size:12px;color:#4B5A70;">Alaknanda River Basin</span>
+  </div>
+`);
+L.marker([30.55, 78.18], { icon: createCustomMarker('⛰️', '#EA580C') }).addTo(heroMap).bindPopup(`
+  <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
+    <strong style="color:#EA580C;font-size:13.5px;">Landslide Sector</strong><br>
+    <span style="font-size:12px;color:#4B5A70;">Tehri Garhwal Ridges</span>
+  </div>
+`);
+L.marker([30.32, 78.04], { icon: createCustomMarker('🏠', '#1E5FE0') }).addTo(heroMap).bindPopup(`
+  <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
+    <strong style="color:#1E5FE0;font-size:13.5px;">Dehradun Relief Base</strong><br>
+    <span style="font-size:12px;color:#4B5A70;">Open &amp; Equipped</span>
+  </div>
+`);
+L.marker([29.95, 78.16], { icon: createCustomMarker('✅', '#17924E') }).addTo(heroMap).bindPopup(`
+  <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
+    <strong style="color:#17924E;font-size:13.5px;">Haridwar Safe Zone</strong><br>
+    <span style="font-size:12px;color:#4B5A70;">Normal Status</span>
+  </div>
+`);
+
+/* ============================================================
+   MAIN LIVE MAP INITIALIZATION (UNBLOCKED CONTROLS)
+   ============================================================ */
+const mainMap = L.map('mainMap', {
+  zoomControl: true,
+  attributionControl: true,
+  scrollWheelZoom: false, // Prevents scroll hijacking on page scroll
+  smoothWheelZoom: true,
+  wheelDebounceTime: 40
+}).setView([22.5, 82.0], 5);
+
+// Pre-create tile layers without any API key or watermarks
+const mainStreetLayer = L.tileLayer(streetTileUrl, streetTileOptions);
+const mainTopoLayer = L.tileLayer(topoTileUrl, topoTileOptions);
+const mainSatLayer = L.tileLayer(satTileUrl, satTileOptions);
+
+// Add default street layer
+mainStreetLayer.addTo(mainMap);
+
+// Click map to toggle scroll wheel zoom for natural desktop UX
+mainMap.on('click', () => {
+  mainMap.scrollWheelZoom.enable();
+});
+mainMap.getContainer().addEventListener('mouseleave', () => {
+  mainMap.scrollWheelZoom.disable();
+});
+
+/* Layer Switcher Controls */
+const toggleStreet = document.getElementById('toggleStreet');
+const toggleTopo = document.getElementById('toggleTopo');
+const toggleSat = document.getElementById('toggleSat');
+
+function activateLayer(btn, layer) {
+  [toggleStreet, toggleTopo, toggleSat].forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  [mainStreetLayer, mainTopoLayer, mainSatLayer].forEach(l => {
+    if (mainMap.hasLayer(l)) mainMap.removeLayer(l);
+  });
+  layer.addTo(mainMap);
+}
+
+toggleStreet.addEventListener('click', () => {
+  activateLayer(toggleStreet, mainStreetLayer);
+  showToast('Switched to Street & Humanitarian Map', '🗺️');
+});
+toggleTopo.addEventListener('click', () => {
+  activateLayer(toggleTopo, mainTopoLayer);
+  showToast('Switched to Topographic Relief Map', '⛰️');
+});
+toggleSat.addEventListener('click', () => {
+  activateLayer(toggleSat, mainSatLayer);
+  showToast('Switched to Satellite Imagery', '🛰️');
+});
+
+/* Store markers and circles with category metadata */
+const mapItems = []; // { id, type, marker, circle, data, isResource }
+
+// Populate Disaster Markers & Hazard Circles
+DISASTERS.forEach(d => {
+  const isCritical = d.severity === 'high';
+  const color = isCritical ? SEV_COLOR.high : SEV_COLOR.warning;
+  const emoji = TYPE_EMOJI[d.type] || '⚠️';
+
+  // Hazard Buffer Circle
+  const circle = L.circle([d.lat, d.lng], {
+    radius: d.radius,
+    color: color,
+    fillColor: color,
+    fillOpacity: isCritical ? 0.18 : 0.14,
+    weight: 1.5,
+    dashArray: isCritical ? '6, 6' : null
+  }).addTo(mainMap);
+
+  circle.bindTooltip(`Hazard Radius: ${(d.radius / 1000).toFixed(0)} km around ${d.location}`, {
+    sticky: true
+  });
+
+  // Custom Marker
+  const marker = L.marker([d.lat, d.lng], {
+    icon: createCustomMarker(emoji, color, isCritical)
+  }).addTo(mainMap);
+
+  // Rich Interactive Popup
+  marker.bindPopup(`
+    <div class="ds-popup">
+      <div class="popup-header ${d.severity}">
+        <div class="popup-type">${emoji} ${d.type.toUpperCase()} HAZARD</div>
+        <span class="popup-badge">${d.severity === 'high' ? 'CRITICAL' : 'WARNING'}</span>
+      </div>
+      <div class="popup-body">
+        <h4>${d.title}</h4>
+        <div class="ploc">📍 ${d.location}</div>
+        <div class="pdesc">${d.description}</div>
+        <div class="pact">
+          <strong>Recommended Action:</strong><br>${d.recommendedAction}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <a href="https://www.google.com/maps/search/?api=1&query=${d.lat},${d.lng}" target="_blank" rel="noopener" class="popup-btn" style="background:#0B1F3D;">
+            Open in Google Maps ↗
+          </a>
+          <a href="#alerts" class="popup-btn">
+            Get SMS Alerts
+          </a>
+        </div>
+      </div>
+    </div>
+  `, { maxWidth: 320 });
+
+  mapItems.push({
+    id: d.id,
+    type: d.type,
+    marker,
+    circle,
+    data: d,
+    isResource: false
+  });
+});
+
+// Populate Resource Markers
+RESOURCES.forEach(r => {
+  const marker = L.marker([r.lat, r.lng], {
+    icon: createCustomMarker(TYPE_EMOJI[r.category] || '🏥', SEV_COLOR.resource)
+  }).addTo(mainMap);
+
+  marker.bindPopup(`
+    <div class="ds-popup">
+      <div class="popup-header resource">
+        <div class="popup-type">🏥 RELIEF RESOURCE</div>
+        <span class="popup-badge">ACTIVE</span>
+      </div>
+      <div class="popup-body">
+        <h4>${r.name}</h4>
+        <div class="ploc">📍 ${r.location}</div>
+        <div class="pdesc"><strong>Status:</strong> ${r.status}<br><strong>Services:</strong> ${r.services}</div>
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lng}" target="_blank" rel="noopener" class="popup-btn">
+          Navigate with GPS Directions →
+        </a>
+      </div>
+    </div>
+  `, { maxWidth: 320 });
+
+  mapItems.push({
+    id: 'res_' + r.id,
+    type: 'resource',
+    marker,
+    circle: null,
+    data: r,
+    isResource: true
+  });
+});
+
+/* ============================================================
+   ACTIVE ADVISORIES SIDEBAR RENDERING
+   ============================================================ */
+const alertsList = document.getElementById('alertsList');
+
+function renderAlerts(filter = 'all') {
+  alertsList.innerHTML = '';
+  const filtered = filter === 'all' 
+    ? DISASTERS 
+    : DISASTERS.filter(d => filter === 'resource' ? false : d.type === filter);
+
+  document.getElementById('activeAlertCount').textContent = `${filtered.length} Incident${filtered.length === 1 ? '' : 's'}`;
+
+  if (filtered.length === 0) {
+    alertsList.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-soft);font-size:13.5px;">No active incidents reported for this category.</div>`;
+    return;
+  }
+
+  filtered.forEach(d => {
+    const card = document.createElement('div');
+    card.className = 'alert-card';
+    card.dataset.id = d.id;
+    const isCritical = d.severity === 'high';
+    const color = isCritical ? SEV_COLOR.high : SEV_COLOR.warning;
+
+    card.innerHTML = `
+      <div class="alert-dot" style="background:${color}18;color:${color}">
+        ${TYPE_EMOJI[d.type] || '⚠️'}
+      </div>
+      <div class="alert-body">
+        <strong>${d.title}</strong>
+        <span>${d.location} · ${d.timestamp}</span>
+        <span class="sev-tag ${isCritical ? 'sev-critical' : 'sev-warning'}">
+          ${isCritical ? 'Critical Warning' : 'Advisory'}
+        </span>
+      </div>
+    `;
+
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.alert-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+
+      // Ensure marker is visible
+      const item = mapItems.find(i => i.id === d.id);
+      if (item && !mainMap.hasLayer(item.marker)) {
+        item.marker.addTo(mainMap);
+        if (item.circle) item.circle.addTo(mainMap);
+      }
+
+      // Smooth flight animation
+      mainMap.flyTo([d.lat, d.lng], 8, {
+        duration: 1.1,
+        easeLinearity: 0.25
+      });
+
+      setTimeout(() => {
+        if (item && item.marker) {
+          item.marker.openPopup();
+        }
+      }, 750);
+    });
+
+    alertsList.appendChild(card);
+  });
+}
+renderAlerts('all');
+
+/* ============================================================
+   SYNCHRONIZED CATEGORY FILTERING
+   ============================================================ */
+let activeFilter = 'all';
+
+document.querySelectorAll('.cat-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+
+    // Filter map markers & circles
+    let visibleCount = 0;
+    mapItems.forEach(item => {
+      const shouldShow = activeFilter === 'all' 
+        ? true 
+        : (activeFilter === 'resource' ? item.isResource : item.type === activeFilter);
+
+      if (shouldShow) {
+        if (!mainMap.hasLayer(item.marker)) item.marker.addTo(mainMap);
+        if (item.circle && !mainMap.hasLayer(item.circle)) item.circle.addTo(mainMap);
+        visibleCount++;
+      } else {
+        if (mainMap.hasLayer(item.marker)) mainMap.removeLayer(item.marker);
+        if (item.circle && mainMap.hasLayer(item.circle)) mainMap.removeLayer(item.circle);
+      }
+    });
+
+    // Update status text
+    document.getElementById('mapStatusText').textContent = `${visibleCount} Markers Active • ${activeFilter.toUpperCase()} Mode`;
+
+    // Filter alerts sidebar
+    renderAlerts(activeFilter);
+  });
+});
+
+/* ============================================================
+   MAP ACTION BUTTONS (FIT ALL, LOCATE ME, RESET VIEW)
+   ============================================================ */
+function fitAllMarkers() {
+  const visibleMarkers = mapItems.filter(i => mainMap.hasLayer(i.marker)).map(i => i.marker);
+  if (visibleMarkers.length > 0) {
+    const group = L.featureGroup(visibleMarkers);
+    mainMap.fitBounds(group.getBounds().pad(0.18), { duration: 0.9 });
+  } else {
+    mainMap.setView([22.5, 82.0], 5);
+  }
+}
+
+document.getElementById('fitBoundsBtn').addEventListener('click', () => {
+  fitAllMarkers();
+  showToast('Fitted all active disaster pins on screen', '🔍');
+});
+
+document.getElementById('resetViewBtn').addEventListener('click', () => {
+  mainMap.flyTo([22.5, 82.0], 5, { duration: 1.0 });
+  showToast('Reset map to all-India overview', '⟲');
+});
+
+let userLocMarker = null;
+let userLocCircle = null;
+
+document.getElementById('locateMeBtn').addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    showToast('Geolocation is not supported by your browser', '⚠️');
+    return;
+  }
+  showToast('Locating your GPS position...', '📍');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      if (userLocMarker) mainMap.removeLayer(userLocMarker);
+      if (userLocCircle) mainMap.removeLayer(userLocCircle);
+
+      userLocCircle = L.circle([lat, lng], {
+        radius: pos.coords.accuracy || 1000,
+        color: '#1E5FE0',
+        fillColor: '#1E5FE0',
+        fillOpacity: 0.15,
+        weight: 1
+      }).addTo(mainMap);
+
+      userLocMarker = L.marker([lat, lng], {
+        icon: createCustomMarker('👤', '#1E5FE0', true)
+      }).addTo(mainMap).bindPopup(`
+        <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
+          <strong style="color:#1E5FE0;">You Are Here</strong><br>
+          <span style="font-size:12px;color:#4B5A70;">GPS Accuracy: ±${Math.round(pos.coords.accuracy || 50)}m</span>
+        </div>
+      `).openPopup();
+
+      mainMap.flyTo([lat, lng], 9, { duration: 1.2 });
+      showToast('Position acquired!', '✅');
+    },
+    (err) => {
+      showToast('Unable to acquire location (permission denied or timeout)', '⚠️');
+    },
+    { enableHighAccuracy: true, timeout: 6000 }
+  );
+});
+
+/* ============================================================
+   CONTAINER RESIZE & SMOOTHNESS GUARANTEE
+   ============================================================ */
+function refreshMapGeometry() {
+  mainMap.invalidateSize();
+  heroMap.invalidateSize();
+}
+window.addEventListener('load', refreshMapGeometry);
+window.addEventListener('resize', refreshMapGeometry, { passive: true });
+setTimeout(refreshMapGeometry, 250);
+setTimeout(refreshMapGeometry, 800);
+
+const mapSectionObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      refreshMapGeometry();
+    }
+  });
+}, { threshold: 0.1 });
+mapSectionObserver.observe(document.getElementById('livemap'));
+
+/* ============================================================
+   STICKY NAVBAR, NOTIFICATIONS & PASSIVE SCROLLING
+   ============================================================ */
+const siteNav = document.getElementById('siteNav');
+window.addEventListener('scroll', () => {
+  siteNav.classList.toggle('scrolled', window.scrollY > 12);
+}, { passive: true });
+
+// Notification Bell
+document.getElementById('notifBellBtn').addEventListener('click', () => {
+  showToast('2 Critical alerts active in Assam & Bay of Bengal', '🚨');
+});
+
+// Report incident button
+document.getElementById('reportIncidentBtn').addEventListener('click', () => {
+  showToast('Emergency reporting portal initiated. Dial 112 for urgent rescue.', '📝');
+});
+
+// Get directions buttons
+document.querySelectorAll('.direct-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const lat = btn.dataset.lat;
+    const lng = btn.dataset.lng;
+    const name = btn.dataset.name;
+    showToast(`Opening directions to ${name}...`, '🧭');
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+  });
+});
+
+// Mobile menu toggling
+const hamburgerBtn = document.getElementById('hamburgerBtn');
+const mobileMenu = document.getElementById('mobileMenu');
+hamburgerBtn.addEventListener('click', () => {
+  const open = mobileMenu.classList.toggle('open');
+  hamburgerBtn.setAttribute('aria-expanded', open);
+});
+mobileMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => mobileMenu.classList.remove('open')));
+
+// Language Switcher
+const langBtn = document.getElementById('langBtn');
+const langMenu = document.getElementById('langMenu');
+langBtn.addEventListener('click', () => {
+  const open = langMenu.classList.toggle('open');
+  langBtn.setAttribute('aria-expanded', open);
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.lang-switch')) langMenu.classList.remove('open');
+});
+langMenu.querySelectorAll('li').forEach(item => {
+  item.addEventListener('click', () => {
+    langMenu.querySelectorAll('li').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+    langMenu.classList.remove('open');
+    showToast(`Language switched to ${item.textContent}`, '🌐');
+  });
+});
+document.querySelectorAll('.mm-lang-opts button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mm-lang-opts button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    showToast(`Language switched`, '🌐');
+  });
+});
+
+/* ============================================================
+   ALERT SUBSCRIPTION FORM
+   ============================================================ */
+const subscribeForm = document.getElementById('subscribeForm');
+const subNote = document.getElementById('subNote');
+subscribeForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const reg = document.getElementById('subRegion').value;
+  const phone = document.getElementById('subPhone').value;
+  subNote.textContent = `✓ Subscribed successfully! Real-time alerts for ${reg} will be sent to ${phone}.`;
+  showToast(`Subscribed to ${reg} emergency broadcasts`, '✅');
+  subscribeForm.reset();
+});
+
+/* ============================================================
+   REVEAL ON SCROLL ANIMATIONS (HARDWARE ACCELERATED)
+   ============================================================ */
+const revealEls = document.querySelectorAll('.reveal');
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.12 });
+revealEls.forEach(el => io.observe(el));
+
+/* ============================================================
+   COUNT-UP STATS (SMOOTH EASING)
+   ============================================================ */
+const statNums = document.querySelectorAll('.stat-num');
+const statIO = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    const el = entry.target;
+    const target = parseFloat(el.dataset.target);
+    const suffix = el.dataset.suffix || '';
+    const isDecimal = target % 1 !== 0;
+    let cur = 0;
+    const duration = 1200; // ms
+    const startTime = performance.now();
+
+    const tick = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 4);
+      cur = ease * target;
+
+      el.textContent = (isDecimal ? cur.toFixed(1) : Math.floor(cur)) + suffix;
+
+      if (progress < 1) {
+        requestAnimationFrame(tick);
+      } else {
+        el.textContent = (isDecimal ? target.toFixed(1) : target) + suffix;
+      }
+    };
+    requestAnimationFrame(tick);
+    statIO.unobserve(el);
+  });
+}, { threshold: 0.35 });
+statNums.forEach(el => statIO.observe(el));
+</script>
+</body>
+</html>

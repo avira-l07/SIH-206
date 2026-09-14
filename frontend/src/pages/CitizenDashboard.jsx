@@ -10,7 +10,8 @@ import HazardReportModal from '../components/HazardReportModal';
 import HazardConfirmationPrompt from '../components/HazardConfirmationPrompt';
 import SafetyStatusWidget from '../components/SafetyStatusWidget';
 import OfflineSimulationDrawer from '../components/OfflineSimulationDrawer';
-import { AlertTriangle, CheckCircle, Clock, ShieldCheck, Camera, Radio, AlertOctagon, HelpCircle } from 'lucide-react';
+import SupplyScanner from '../components/SupplyScanner';
+import { AlertTriangle, CheckCircle, Clock, ShieldCheck, Camera, Radio, AlertOctagon, HelpCircle, Package, QrCode } from 'lucide-react';
 
 export default function CitizenDashboard() {
   const { user } = useAuth();
@@ -28,6 +29,9 @@ export default function CitizenDashboard() {
       : { lat: 20.5937, lng: 78.9629 }
   );
   const [hazardModalOpen, setHazardModalOpen] = useState(false);
+  const [supplyScannerOpen, setSupplyScannerOpen] = useState(false);
+  const [myPickups, setMyPickups] = useState([]);
+  const [loadingPickups, setLoadingPickups] = useState(false);
 
   // Synchronize with authenticated user's saved GPS ONLY if live GPS hasn't been acquired yet
   useEffect(() => {
@@ -35,6 +39,18 @@ export default function CitizenDashboard() {
       setUserCoords({ lat: user.lat, lng: user.lng });
     }
   }, [user]);
+
+  const fetchMyPickups = async () => {
+    try {
+      setLoadingPickups(true);
+      const res = await api.get('/supplies/distributions/mine');
+      setMyPickups(res.data.distributions || []);
+    } catch (err) {
+      console.warn('Could not load citizen pickups:', err.message);
+    } finally {
+      setLoadingPickups(false);
+    }
+  };
 
   // Fetch initial data
   const fetchData = async () => {
@@ -49,6 +65,7 @@ export default function CitizenDashboard() {
       setShelters(sheltersRes.data.shelters || []);
       setMySOSList(sosRes.data.requests || []);
       setHazardReports(hazardsRes.data.reports || []);
+      fetchMyPickups();
     } catch (err) {
       console.error('Error loading citizen dashboard data', err);
     }
@@ -119,6 +136,12 @@ export default function CitizenDashboard() {
       );
     });
 
+    socket.on('supply:distributed', (data) => {
+      if (data?.distribution && data.distribution.citizenId === user?.id) {
+        setMyPickups((prev) => [data.distribution, ...prev.filter((p) => p.id !== data.distribution.id)]);
+      }
+    });
+
     return () => {
       socket.off('alert:new');
       socket.off('alert:deactivated');
@@ -128,6 +151,7 @@ export default function CitizenDashboard() {
       socket.off('hazard:new');
       socket.off('hazard:confirmed');
       socket.off('hazard:tier_changed');
+      socket.off('supply:distributed');
     };
   }, [socket]);
 
@@ -243,6 +267,17 @@ export default function CitizenDashboard() {
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              id="citizen-supply-scan-btn"
+              onClick={() => setSupplyScannerOpen(true)}
+              className="flex items-center gap-1.5 px-4 py-3 bg-[#14231F] hover:bg-black text-white font-display font-bold text-xs sm:text-sm rounded transition-colors whitespace-nowrap shrink-0 shadow-xs"
+              title="Scan relief item QR code at shelter pickup station"
+            >
+              <Package className="w-4 h-4 text-[#4ADE80]" />
+              <span>SCAN SUPPLY PICKUP</span>
+            </button>
+
             <button
               id="report-hazard-btn"
               onClick={() => setHazardModalOpen(true)}
@@ -401,6 +436,86 @@ export default function CitizenDashboard() {
             {/* Mark Myself Safe Broadcast & Relative Safety Lookup */}
             <SafetyStatusWidget />
 
+            {/* My Claimed Relief Supplies Log (Anti-Hoarding Personal Ledger) */}
+            <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-3 text-xs space-y-2.5">
+              <div className="flex items-center justify-between border-b border-[#D8D3C7] pb-2">
+                <div className="flex items-center gap-1.5 font-display font-bold uppercase text-[#14231F]">
+                  <Package className="w-4 h-4 text-[#2E6E4E]" />
+                  <span>My Relief Pickups</span>
+                  <span className="px-1.5 py-0.2 bg-[#EFECE4] rounded text-[10px] font-mono">
+                    {myPickups.length}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSupplyScannerOpen(true)}
+                  className="px-2 py-0.5 bg-[#14231F] hover:bg-black text-white text-[10px] font-mono rounded font-semibold flex items-center gap-1"
+                >
+                  <QrCode className="w-3 h-3 text-[#4ADE80]" />
+                  <span>Scan QR</span>
+                </button>
+              </div>
+
+              {loadingPickups ? (
+                <div className="p-3 text-center text-[11px] font-mono text-[#14231F]/60">
+                  Loading personal pickup history...
+                </div>
+              ) : myPickups.length === 0 ? (
+                <div className="p-3 text-center text-[11px] font-mono text-[#14231F]/60 bg-[#F6F4EF] rounded border border-dashed border-[#D8D3C7]">
+                  No supplies claimed yet. Scan a batch QR code at any relief shelter station.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {myPickups.map((p) => {
+                    const pickupTime = new Date(p.distributedAt).getTime();
+                    const now = Date.now();
+                    const hoursSince = (now - pickupTime) / (1000 * 60 * 60);
+                    const isCooldownActive = hoursSince < 12;
+                    const nextEligibleDate = new Date(pickupTime + 12 * 60 * 60 * 1000);
+                    const minsRemaining = Math.max(1, Math.round((nextEligibleDate.getTime() - now) / 60000));
+                    const remH = Math.floor(minsRemaining / 60);
+                    const remM = minsRemaining % 60;
+                    const remStr = remH > 0 ? `${remH}h ${remM}m` : `${remM}m`;
+
+                    return (
+                      <div
+                        key={p.id}
+                        className="p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-left space-y-1"
+                      >
+                        <div className="flex items-start justify-between gap-1">
+                          <span className="font-display font-bold text-xs text-[#14231F]">
+                            {p.itemName}
+                          </span>
+                          <span className="px-1.5 py-0.2 bg-[#2E6E4E]/15 text-[#2E6E4E] border border-[#2E6E4E]/30 rounded text-[9px] font-mono font-bold shrink-0">
+                            +{p.quantity} {p.supplyRequest?.unit || 'unit'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10px] font-mono text-[#14231F]/70">
+                          <span>{p.shelter?.name || 'Relief Camp'}</span>
+                          <span>{new Date(p.distributedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+
+                        <div className="pt-0.5">
+                          {isCooldownActive ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#C97A2B]/10 border border-[#C97A2B]/30 text-[#C97A2B] rounded text-[9px] font-mono">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>12h Cooldown (Eligible in {remStr})</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#2E6E4E]/10 border border-[#2E6E4E]/30 text-[#2E6E4E] rounded text-[9px] font-mono">
+                              <CheckCircle className="w-2.5 h-2.5" />
+                              <span>Eligible for next pickup</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <div className="flex-1">
               <ShelterList
                 shelters={shelters}
@@ -432,6 +547,17 @@ export default function CitizenDashboard() {
         onClose={() => setHazardModalOpen(false)}
         onReportCreated={handleHazardReportCreated}
         defaultCoords={userCoords}
+      />
+
+      {/* Supply Pickup QR Scanner Modal */}
+      <SupplyScanner
+        isOpen={supplyScannerOpen}
+        onClose={() => setSupplyScannerOpen(false)}
+        user={user}
+        onSuccess={() => {
+          fetchMyPickups();
+          fetchData();
+        }}
       />
 
       {/* Simulated Offline Relay & SMS Gateway Drawer */}

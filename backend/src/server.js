@@ -42,6 +42,9 @@ const corsOptions = {
     const allowedDomainPatterns = [
       'localhost',
       '127.0.0.1',
+      '192.168.',
+      '10.',
+      '172.',
       '.vercel.app',
       '.onrender.com',
       '.railway.app',
@@ -82,7 +85,7 @@ app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 // limiting for localhost entirely; production IPs never look like this.
 function isLocalhost(req) {
   const ip = req.ip || req.connection?.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  return ip === '127.0.0.1' || ip === '::1' || ip.includes('127.0.0.1') || ip.includes('192.168.') || ip.includes('10.');
 }
 
 // Global rate limiter: 200 req / 15 min per IP (window can be tuned per-route)
@@ -158,6 +161,8 @@ app.use('/api/offline', offlineRoutes);               // sync-batch sub-route ha
 app.use('/api/assets', assetRoutes);
 app.use('/api/missing-persons', missingRoutes);
 app.use('/api/supplies', supplyRoutes);
+  app.use('/api/supply', supplyRoutes);
+  app.use('/api/supply-requests', supplyRoutes);
 app.use('/api/supply-shipments', shipmentRoutes);
 app.use('/api/registry', registryRoutes);
 

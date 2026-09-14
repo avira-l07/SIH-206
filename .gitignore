@@ -5,3 +5,5 @@ dev.db-journal
 dist/
 .DS_Store
 *.log
+
+active_tunnel_url.txt

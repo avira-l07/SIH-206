@@ -248,3 +248,29 @@ Max-Priority Modal                             OS Lock-Screen Alert
 
 > "The platform's alert system is architecturally compatible with national alerting standards (Common Alerting Protocol) and could integrate with NDMA's Sachet portal in a production deployment with the appropriate government API access. This integration is not implemented in the current submission — alerts are created and broadcast directly by verified platform administrators."
 
+
+
+## Supply Distribution & Anti-Hoarding Architecture (Decision 0.1 - 0.7)
+
+```
+[Physical Shelter Station]
+       │ (Scannable Batch QR: SUPPLY:<shelterId>:<supplyRequestId>:<itemSlug>)
+       ▼
+Citizen Browser App (html5-qrcode camera or manual fallback entry)
+       │
+       ▼ (IndexedDB offlineQueue fallback if disconnected)
+POST /api/supplies/distributions
+       │
+       ├─► 1. Authenticated Citizen Verification
+       ├─► 2. Idempotency Check (idempotencyKey unique constraint)
+       ├─► 3. Anti-Hoarding Rule (12-hour cooldown per citizen per item)
+       │      └─► Rejects duplicate claims within 12h window with HTTP 429
+       ├─► 4. Single-Write-Path Stock Decrement (logSupplyDeltaInternal)
+       │      └─► Atomically clamps quantityFulfilled = Math.max(0, current - qty)
+       │      └─► Recalculates status (OK, LOW, CRITICAL)
+       ├─► 5. Persists SupplyDistribution (citizenId, shelterId, supplyRequestId, timestamp)
+       └─► 6. Real-Time WebSocket Emission (supply:distributed & supply:updated)
+```
+
+- **Personal Log:** Citizens query `/api/supplies/distributions/mine` to view personal relief history.
+- **Oversight Log:** Responders query `/api/supplies/distributions?shelterId=` (strictly role-scoped to ADMIN & VOLUNTEER) to audit distributions with citizen names and timestamps.

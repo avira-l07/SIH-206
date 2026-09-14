@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Package, AlertCircle, CheckCircle2, Plus, ArrowUp, X, Truck, FileCheck2, Clock } from 'lucide-react';
+import { Package, AlertCircle, CheckCircle2, Plus, ArrowUp, X, Truck, FileCheck2, Clock, QrCode, Printer, Copy, Check } from 'lucide-react';
+import QRCode from 'qrcode';
 import api from '../services/api';
 
 export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
@@ -10,6 +11,9 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
   const [showAddNeed, setShowAddNeed] = useState(false);
   const [showAddShipment, setShowAddShipment] = useState(false);
   const [selectedSupplyForShipment, setSelectedSupplyForShipment] = useState(null);
+  const [distributions, setDistributions] = useState([]);
+  const [qrModalItem, setQrModalItem] = useState(null);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   const [needForm, setNeedForm] = useState({
     itemName: '',
@@ -31,13 +35,17 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
       const supplyUrl = shelter ? `/supplies?shelterId=${shelter.id}` : '/supplies';
       const shipmentUrl = shelter ? `/supply-shipments?shelterId=${shelter.id}` : '/supply-shipments';
 
-      const [supplyRes, shipmentRes] = await Promise.all([
+      const distUrl = shelter ? `/supplies/distributions?shelterId=${shelter.id}` : '/supplies/distributions';
+
+      const [supplyRes, shipmentRes, distRes] = await Promise.all([
         api.get(supplyUrl),
         api.get(shipmentUrl).catch(() => ({ data: { shipments: [] } })),
+        api.get(distUrl).catch(() => ({ data: { distributions: [] } })),
       ]);
 
       setSupplies(supplyRes.data.supplies || []);
       setShipments(shipmentRes.data.shipments || []);
+      setDistributions(distRes.data.distributions || []);
     } catch (err) {
       console.error('Failed to load supplies or shipments', err);
     } finally {
@@ -77,6 +85,42 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to add supply request');
     }
+  };
+
+  const handleShowQR = async (supplyItem) => {
+    try {
+      const sId = shelter?.id || supplyItem.shelterId;
+      const slug = supplyItem.itemName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+      const codeString = `SUPPLY:${sId}:${supplyItem.id}:${slug}`;
+
+      const dataUrl = await QRCode.toDataURL(codeString, {
+        width: 320,
+        margin: 2,
+        color: {
+          dark: '#14231F',
+          light: '#FFFFFF',
+        },
+      });
+
+      setQrModalItem({
+        item: supplyItem,
+        code: codeString,
+        dataUrl,
+      });
+      setCopiedCode(false);
+    } catch (err) {
+      console.error('Failed to generate QR code:', err);
+      alert('Could not generate QR code');
+    }
+  };
+
+  const handleCopyCode = (text) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
   };
 
   const handleOpenShipmentModal = (supplyItem) => {
@@ -222,6 +266,18 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
             >
               <Truck className="w-3.5 h-3.5" />
               <span>VERIFIED SHIPMENTS ({shipments.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('DISTRIBUTIONS')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded transition-colors ${
+                activeTab === 'DISTRIBUTIONS'
+                  ? 'bg-[#14231F] text-white font-bold'
+                  : 'text-[#14231F]/70 hover:text-[#14231F]'
+              }`}
+            >
+              <FileCheck2 className="w-3.5 h-3.5" />
+              <span>CITIZEN PICKUP LOG ({distributions.length})</span>
             </button>
           </div>
 
@@ -446,6 +502,15 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
                               <>
                                 <button
                                   type="button"
+                                  onClick={() => handleShowQR(item)}
+                                  className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7] text-[10px] font-mono flex items-center gap-1 text-[#14231F]"
+                                  title="Generate station QR code for citizen pickups"
+                                >
+                                  <QrCode className="w-3 h-3 text-[#2E6E4E]" />
+                                  <span>QR</span>
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => handleQuickFulfill(item, 10)}
                                   className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7] text-[10px]"
                                   title="Quick-verify 10 units"
@@ -470,7 +535,7 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
                 </tbody>
               </table>
             )
-          ) : (
+          ) : activeTab === 'SHIPMENTS' ? (
             shipments.length === 0 ? (
               <div className="p-8 text-center text-xs font-mono text-[#14231F]/60">
                 No verified supply shipments logged yet for this facility.
@@ -514,8 +579,158 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
                 </tbody>
               </table>
             )
+          ) : (
+            // activeTab === 'DISTRIBUTIONS'
+            <div className="space-y-3">
+              {/* Summary Stats Cards */}
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded">
+                  <div className="text-[10px] font-mono text-[#14231F]/70 uppercase">Total Pickups</div>
+                  <div className="text-lg font-display font-bold text-[#14231F]">{distributions.length}</div>
+                </div>
+                <div className="p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded">
+                  <div className="text-[10px] font-mono text-[#14231F]/70 uppercase">Units Distributed</div>
+                  <div className="text-lg font-display font-bold text-[#2E6E4E]">
+                    {distributions.reduce((acc, d) => acc + (d.quantity || 1), 0)}
+                  </div>
+                </div>
+                <div className="p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded">
+                  <div className="text-[10px] font-mono text-[#14231F]/70 uppercase">Unique Citizens</div>
+                  <div className="text-lg font-display font-bold text-[#C97A2B]">
+                    {new Set(distributions.map((d) => d.citizenId)).size}
+                  </div>
+                </div>
+              </div>
+
+              {distributions.length === 0 ? (
+                <div className="p-8 text-center text-xs font-mono text-[#14231F]/60">
+                  No citizen supply pickups logged yet for this facility. Print station QR codes from the Supply Gaps tab to allow citizen self-service pickups.
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-[#EFECE4] text-[10px] uppercase text-[#14231F]/70 border-b border-[#D8D3C7]">
+                    <tr>
+                      <th className="p-2">Pickup Time</th>
+                      <th className="p-2">Citizen Name / ID</th>
+                      <th className="p-2">Item Claimed</th>
+                      <th className="p-2">Quantity</th>
+                      <th className="p-2">Anti-Hoarding Rule</th>
+                      <th className="p-2 text-right">Audit Ref</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#D8D3C7]">
+                    {distributions.map((d) => (
+                      <tr key={d.id}>
+                        <td className="p-2 text-[11px] text-[#14231F]/70">
+                          {new Date(d.distributedAt).toLocaleDateString()} {new Date(d.distributedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="p-2 font-display font-semibold text-[#14231F]">
+                          {d.citizen?.name || `Citizen #${d.citizenId}`}
+                          {d.citizen?.phone && (
+                            <div className="text-[10px] font-mono text-[#14231F]/60">
+                              {d.citizen.phone}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-2 font-bold text-[#14231F]">
+                          {d.itemName}
+                        </td>
+                        <td className="p-2 tabular-nums font-bold text-[#2E6E4E]">
+                          +{d.quantity} {d.supplyRequest?.unit || 'units'}
+                        </td>
+                        <td className="p-2">
+                          <span className="px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase bg-[#2E6E4E]/15 border border-[#2E6E4E]/30 text-[#2E6E4E]">
+                            12H WINDOW COMPLIANT
+                          </span>
+                        </td>
+                        <td className="p-2 text-right font-mono text-[10px] text-[#14231F]/60">
+                          {d.idempotencyKey ? d.idempotencyKey.slice(0, 14) + '...' : `dist_${d.id}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           )}
         </div>
+
+        {/* QR Code Station Placard Modal */}
+        {qrModalItem && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs">
+            <div className="bg-white border-2 border-[#14231F] rounded p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-[#D8D3C7] pb-2">
+                <div className="flex items-center gap-1.5 font-display font-bold uppercase text-xs text-[#14231F]">
+                  <QrCode className="w-4 h-4 text-[#2E6E4E]" />
+                  <span>Station Pickup Placard</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQrModalItem(null)}
+                  className="p-1 hover:bg-[#EFECE4] rounded text-xs"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div>
+                <h3 className="font-display font-bold text-base text-[#14231F]">
+                  {qrModalItem.item?.itemName}
+                </h3>
+                <p className="text-xs text-[#14231F]/70 font-mono mt-0.5">
+                  {shelter ? shelter.name : 'Relief Supply Station'}
+                </p>
+              </div>
+
+              {/* QR Image */}
+              <div className="p-3 bg-white border border-[#D8D3C7] rounded inline-block shadow-inner">
+                <img
+                  src={qrModalItem.dataUrl}
+                  alt={qrModalItem.item?.itemName}
+                  className="w-56 h-56 mx-auto object-contain"
+                />
+              </div>
+
+              {/* Encoded String Fallback */}
+              <div className="space-y-1">
+                <div className="text-[10px] font-mono text-[#14231F]/60 uppercase">Manual Code Fallback:</div>
+                <div className="flex items-center justify-center gap-1 bg-[#F6F4EF] border border-[#D8D3C7] p-1.5 rounded font-mono text-[11px] font-bold text-[#14231F] select-all">
+                  <span className="truncate max-w-[200px]">{qrModalItem.code}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCode(qrModalItem.code)}
+                    className="p-1 hover:bg-[#D8D3C7] rounded text-xs ml-1 shrink-0"
+                    title="Copy code string"
+                  >
+                    {copiedCode ? <Check className="w-3.5 h-3.5 text-[#2E6E4E]" /> : <Copy className="w-3.5 h-3.5 text-[#14231F]" />}
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-[10px] font-mono text-[#14231F]/70 leading-relaxed">
+                Citizens scan this placard via their Citizen Console to record verified pickup. Enforces 1 unit per citizen per 12 hours.
+              </p>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex-1 py-2 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F] font-mono font-bold text-xs rounded border border-[#D8D3C7] flex items-center justify-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Placard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQrModalItem(null)}
+                  className="flex-1 py-2 bg-[#14231F] hover:bg-black text-white font-display font-bold text-xs rounded"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -177,6 +177,19 @@ function broadcastHazardTierChanged(report) {
   }
 }
 
+
+function broadcastSupplyUpdated(payload) {
+  if (ioInstance) {
+    ioInstance.emit('supply:updated', payload);
+  }
+}
+
+function broadcastSupplyDistributed(payload) {
+  if (ioInstance) {
+    ioInstance.emit('supply:distributed', payload);
+  }
+}
+
 module.exports = {
   setupSockets,
   getIO,
@@ -194,4 +207,6 @@ module.exports = {
   broadcastHazardCreated,
   broadcastHazardConfirmed,
   broadcastHazardTierChanged,
+  broadcastSupplyUpdated,
+  broadcastSupplyDistributed,
 };

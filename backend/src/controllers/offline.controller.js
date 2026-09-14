@@ -3,6 +3,7 @@ const { parseSMSPayload, applyParsedPayload } = require('../services/smsParser.s
 const { broadcastSOSCreated, broadcastHazardCreated, broadcastShelterAudit } = require('../sockets/socketHandler');
 const { formatSOS } = require('./sos.controller');
 const { computeShelterStatus, logShelterEventInternal } = require('./shelter.controller');
+const { recordSupplyDistributionInternal } = require('./supply.controller');
 
 /**
  * Ingests a simulated raw SMS telemetry packet
@@ -317,6 +318,63 @@ async function syncOfflineBatch(req, res) {
           });
 
           results.push({ item, status: 'SYNCED', record: { id: user.id, safetyStatus: user.safetyStatus }, logId: safetyLog.id });
+        } else if (item.type === 'SUPPLY_DISTRIBUTION') {
+          const data = item.payload || {};
+          let targetCitizenId = (req.user && req.user.id) || parseInt(data.citizenId);
+          if (req.user && req.user.role === 'CITIZEN') {
+            targetCitizenId = req.user.id;
+          }
+
+          if (!targetCitizenId || isNaN(targetCitizenId)) {
+            results.push({ item, status: 'FAILED', error: 'Valid citizenId is required for supply distribution sync' });
+            continue;
+          }
+
+          try {
+            const distResult = await recordSupplyDistributionInternal({
+              citizenId: targetCitizenId,
+              scannedCode: data.scannedCode,
+              quantity: data.quantity || 1,
+              idempotencyKey: safeKey || item.idempotencyKey,
+              queuedAt: item.queuedAt || null,
+            });
+
+            if (distResult.duplicateIgnored) {
+              results.push({
+                item,
+                status: 'DUPLICATE_IGNORED',
+                message: 'Supply pickup already registered',
+                distribution: distResult.distribution,
+              });
+              continue;
+            }
+
+            const distLog = await prisma.offlineSyncLog.create({
+              data: {
+                rawPayload: JSON.stringify(item.payload),
+                parsedData: JSON.stringify({
+                  action: 'SUPPLY_DISTRIBUTION_SYNC',
+                  idempotencyKey: safeKey,
+                  citizenId: targetCitizenId,
+                  distributionId: distResult.distribution.id,
+                  itemName: distResult.distribution.itemName,
+                  relayedViaLocalHub: true,
+                  queuedAt: item.queuedAt || null,
+                }),
+                sourceNode: sanitizedSourceNode,
+                syncedAt: new Date(),
+              },
+            });
+
+            results.push({
+              item,
+              status: 'SYNCED',
+              record: distResult.distribution,
+              logId: distLog.id,
+            });
+          } catch (err) {
+            results.push({ item, status: 'FAILED', error: err.message });
+          }
         } else if (item.type === 'SMS') {
           const payloadStr = typeof item.payload === 'string' ? item.payload : item.payload?.raw || '';
           const parsed = parseSMSPayload(payloadStr);

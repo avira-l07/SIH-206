@@ -5,14 +5,8 @@ export function resolveApiBaseUrl() {
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
-  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-    const host = window.location.hostname;
-    // If accessing from mobile phone or laptop via LAN IP (e.g., 192.168.x.x, 10.x.x.x)
-    if (host !== 'localhost' && host !== '127.0.0.1') {
-      return `${window.location.protocol}//${host}:5000`;
-    }
-  }
-  return 'http://localhost:5000';
+  // In development, Vite proxy forwards /api and /socket.io to http://localhost:5000
+  return '';
 }
 
 const API_BASE_URL = resolveApiBaseUrl();
