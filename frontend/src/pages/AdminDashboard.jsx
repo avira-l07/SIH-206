@@ -78,7 +78,7 @@ export default function AdminDashboard() {
         region: areaBroadcastRegion,
         message: areaBroadcastMessage.trim(),
         hazardType: 'ADVISORY',
-        severity: 'WARNING',
+        severity: 'WATCH',
         radiusKm: 25.0,
       });
 

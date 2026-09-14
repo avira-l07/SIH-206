@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { SOI_NORTHERN_BOUNDARY } from '../data/soiBoundary';
 import { Check, ShieldCheck, Phone, MapPin, Sliders, AlertTriangle } from 'lucide-react';
 
 // Fix for default Leaflet icon paths in bundlers
@@ -130,6 +131,24 @@ function MapFocusController({ center, zoom }) {
 // Bounds helper to fit all incidents dynamically on the map
 function MapBoundsController({ triggerFit, incidents = [] }) {
   const map = useMap();
+  const initialFittedRef = React.useRef(false);
+
+  // Auto-fit on initial load once incidents arrive
+  useEffect(() => {
+    if (incidents.length > 0 && !initialFittedRef.current) {
+      const points = incidents
+        .filter((i) => i && typeof i.lat === 'number' && typeof i.lng === 'number')
+        .map((i) => [i.lat, i.lng]);
+
+      if (points.length > 0) {
+        const bounds = L.latLngBounds(points);
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 11, duration: 1.0 });
+        initialFittedRef.current = true;
+      }
+    }
+  }, [incidents, map]);
+
+  // Explicit trigger (e.g. FIT ALL INCIDENTS button)
   useEffect(() => {
     if (!triggerFit) return;
     const points = incidents
@@ -138,7 +157,7 @@ function MapBoundsController({ triggerFit, incidents = [] }) {
 
     if (points.length > 0) {
       const bounds = L.latLngBounds(points);
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14, duration: 1.2 });
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12, duration: 1.0 });
     }
   }, [triggerFit, incidents, map]);
   return null;
@@ -155,6 +174,39 @@ const REGION_COORDINATES = {
   kerala: [11.6854, 76.1320],
 };
 
+
+const MAP_LAYERS = {
+  voyager: {
+    id: 'voyager',
+    name: 'Tactical (SOI Aligned)',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; CartoDB &mdash; Humanitarian Emergency Ops',
+    subdomains: 'abcd',
+    maxZoom: 19,
+  },
+  topo: {
+    id: 'topo',
+    name: 'Topographic Relief',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri &mdash; Topographic Base',
+    maxZoom: 18,
+  },
+  satellite: {
+    id: 'satellite',
+    name: 'Satellite Aerial',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri &mdash; World Imagery',
+    maxZoom: 18,
+  },
+  humanitarian: {
+    id: 'humanitarian',
+    name: 'Humanitarian OSM',
+    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors, HOT',
+    maxZoom: 19,
+  },
+};
+
 export default function MapView({
   alerts = [],
   sosRequests = [],
@@ -167,8 +219,10 @@ export default function MapView({
   onConfirmHazard,
   onViewSupplies,
   userRole,
+  mode = 'authenticated', // 'authenticated' | 'public'
 }) {
   const [fitTrigger, setFitTrigger] = React.useState(0);
+  const [selectedLayer, setSelectedLayer] = React.useState('voyager');
   const [selectedRegionJump, setSelectedRegionJump] = React.useState('');
   const [activeCenter, setActiveCenter] = React.useState(null);
   const [isOffline, setIsOffline] = React.useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
@@ -198,12 +252,15 @@ export default function MapView({
     if (shelters.length > 0 && typeof shelters[0].lat === 'number') {
       return [shelters[0].lat, shelters[0].lng];
     }
-    return [20.5937, 78.9629]; // Geographic center of India (national fallback if no incidents/user location)
+    return [30.3165, 78.0322]; // Default: Uttarakhand Disaster Operations Center
   }, [focusCoords, userCoords, alerts, shelters]);
 
   const allIncidents = React.useMemo(() => {
+    if (mode === 'public') {
+      return [...alerts.filter((a) => a.active !== false), ...shelters];
+    }
     return [...alerts.filter((a) => a.active !== false), ...sosRequests, ...shelters, ...hazardReports];
-  }, [alerts, sosRequests, shelters, hazardReports]);
+  }, [alerts, sosRequests, shelters, hazardReports, mode]);
 
   const handleRegionJump = (key) => {
     setSelectedRegionJump(key);
@@ -253,6 +310,20 @@ export default function MapView({
         </button>
 
         <div className="flex items-center gap-1">
+          <span className="text-[10px] text-[#14231F]/70 font-semibold">LAYER:</span>
+          <select
+            value={selectedLayer}
+            onChange={(e) => setSelectedLayer(e.target.value)}
+            className="bg-[#F6F4EF] border border-[#D8D3C7] rounded px-1.5 py-1 text-[11px] text-[#14231F] font-mono focus:outline-none focus:border-[#14231F]"
+          >
+            <option value="voyager">🗺️ Tactical (SOI Aligned)</option>
+            <option value="topo">🏔️ Topographic Relief</option>
+            <option value="satellite">🛰️ Satellite Aerial</option>
+            <option value="humanitarian">🚑 Humanitarian OSM</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1">
           <span className="text-[10px] text-[#14231F]/70 font-semibold">JUMP:</span>
           <select
             value={selectedRegionJump}
@@ -282,15 +353,38 @@ export default function MapView({
         </div>
       )}
 
+      {/* Survey of India Official Compliance Badge */}
+      <div className="absolute bottom-2 left-2 z-[450] bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded px-2.5 py-1 text-[10px] font-mono text-[#14231F] shadow-xs flex items-center gap-1.5 pointer-events-none">
+        <span className="inline-block w-2 h-2 rounded-full bg-[#2E6E4E] animate-pulse"></span>
+        <span className="font-bold text-[#14231F]">🇮🇳 Survey of India Boundary Aligned</span>
+      </div>
+
       <MapContainer
         center={defaultCenter}
-        zoom={12}
+        zoom={9}
+        minZoom={5}
+        maxBounds={[[6.0, 68.0], [37.6, 97.5]]}
+        maxBoundsViscosity={0.85}
         scrollWheelZoom={true}
         className="w-full h-full"
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          key={selectedLayer}
+          attribution={MAP_LAYERS[selectedLayer].attribution}
+          url={MAP_LAYERS[selectedLayer].url}
+          subdomains={MAP_LAYERS[selectedLayer].subdomains || 'abc'}
+          maxZoom={MAP_LAYERS[selectedLayer].maxZoom || 19}
+        />
+
+        {/* Official Survey of India (SOI) Northern Boundary */}
+        <Polyline
+          positions={SOI_NORTHERN_BOUNDARY}
+          pathOptions={{
+            color: '#14231F',
+            weight: 3.5,
+            opacity: 0.85,
+            dashArray: '8, 6',
+          }}
         />
 
         <MapFocusController center={activeCenter || focusCoords} />
@@ -352,8 +446,8 @@ export default function MapView({
           );
         })}
 
-        {/* Crowdsourced Hazard Reports with Confidence Tiers (Decision 0.2 & Item 2.5) */}
-        {hazardReports.map((report) => {
+        {/* Crowdsourced Hazard Reports with Confidence Tiers (Decision 0.2 & Item 2.5 - Authenticated Only) */}
+        {mode !== 'public' && hazardReports.map((report) => {
           let icon = hazardGreyIcon;
           let tierColor = '#9A968C';
           if (report.confidenceTier === 'AMBER') {
@@ -476,8 +570,8 @@ export default function MapView({
           );
         })}
 
-        {/* SOS Distress Calls */}
-        {sosRequests.map((sos) => {
+        {/* SOS Distress Calls (Authenticated Responders Only) */}
+        {mode !== 'public' && sosRequests.map((sos) => {
           let icon = sosPendingIcon;
           if (sos.status === 'IN_PROGRESS') icon = sosProgressIcon;
           if (sos.status === 'RESOLVED') icon = sosResolvedIcon;
@@ -589,14 +683,25 @@ export default function MapView({
                       Contact: <a href={`tel:${shelter.contact}`} className="underline">{shelter.contact}</a>
                     </div>
                   )}
-                  {onViewSupplies && (
-                    <button
-                      type="button"
-                      onClick={() => onViewSupplies(shelter)}
-                      className="w-full mt-2 py-1 bg-[#14231F] hover:bg-black text-white text-[10px] font-mono font-bold rounded"
+                  {mode === 'public' ? (
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&destination=${shelter.lat},${shelter.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block w-full text-center mt-2 py-1 bg-[#14231F] hover:bg-black text-white text-[10px] font-mono font-bold rounded transition-colors"
                     >
-                      📦 VIEW SUPPLIES & SHIPMENTS
-                    </button>
+                      🧭 GET GPS DIRECTIONS ↗
+                    </a>
+                  ) : (
+                    onViewSupplies && (
+                      <button
+                        type="button"
+                        onClick={() => onViewSupplies(shelter)}
+                        className="w-full mt-2 py-1 bg-[#14231F] hover:bg-black text-white text-[10px] font-mono font-bold rounded"
+                      >
+                        📦 VIEW SUPPLIES & SHIPMENTS
+                      </button>
+                    )
                   )}
                 </div>
               </Popup>

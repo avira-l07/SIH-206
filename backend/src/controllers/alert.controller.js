@@ -229,7 +229,7 @@ async function createAlert(req, res) {
     const alert = await prisma.alert.create({
       data: {
         hazardType: hazardType || 'ADVISORY',
-        severity: severity || 'WARNING',
+        severity: severity || 'WATCH',
         region: region || 'All Regions (National/Statewide)',
         lat: finalLat,
         lng: finalLng,

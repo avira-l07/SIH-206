@@ -412,6 +412,7 @@ export default function VolunteerDashboard() {
           <VolunteerShelterStore
             shelters={shelters}
             currentVolunteer={user}
+            onRequestSupplies={(targetShelter) => setViewingSuppliesShelter(targetShelter)}
             onShelterUpdated={(updated) =>
               setShelters((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
             }

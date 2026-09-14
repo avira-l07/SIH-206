@@ -25,6 +25,7 @@ model User {
   hazardReports HazardReport[]
   confirmations HazardConfirmation[]
   civilianAssets CivilianAsset[]
+  supplyDistributions SupplyDistribution[]
 }
 
 model Alert {
@@ -94,6 +95,7 @@ model Shelter {
   createdAt             DateTime         @default(now())
   supplies              SupplyRequest[]
   shipments             SupplyShipment[]
+  supplyDistributions   SupplyDistribution[]
   events                ShelterEvent[]
 }
 
@@ -195,6 +197,7 @@ model SupplyRequest {
   status            String           @default("OK") // OK, LOW, CRITICAL
   updatedAt         DateTime         @default(now())
   shipments         SupplyShipment[]
+  distributions     SupplyDistribution[]
 }
 
 model SupplyShipment {
@@ -225,3 +228,21 @@ model PushSubscription {
   createdAt DateTime @default(now())
 }
 
+
+model SupplyDistribution {
+  id              Int            @id @default(autoincrement())
+  citizenId       Int
+  citizen         User           @relation(fields: [citizenId], references: [id], onDelete: Cascade)
+  shelterId       Int
+  shelter         Shelter        @relation(fields: [shelterId], references: [id], onDelete: Cascade)
+  supplyRequestId Int?
+  supplyRequest   SupplyRequest? @relation(fields: [supplyRequestId], references: [id], onDelete: SetNull)
+  itemName        String
+  quantity        Int            @default(1)
+  scannedCode     String
+  idempotencyKey  String         @unique
+  distributedAt   DateTime       @default(now())
+
+  @@index([citizenId, supplyRequestId])
+  @@index([shelterId, distributedAt])
+}

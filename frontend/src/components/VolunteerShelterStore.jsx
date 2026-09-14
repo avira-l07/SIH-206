@@ -13,6 +13,7 @@ import api from '../services/api';
 export default function VolunteerShelterStore({
   shelters = [],
   currentVolunteer,
+  onRequestSupplies,
   onShelterUpdated,
 }) {
   const [selectedShelterId, setSelectedShelterId] = useState(
@@ -119,6 +120,18 @@ export default function VolunteerShelterStore({
 
         {/* Assigned Shelter Switcher */}
         <div className="flex items-center gap-2 font-mono text-xs">
+          {onRequestSupplies && (
+            <button
+              type="button"
+              id="volunteer-header-req-supplies-btn"
+              onClick={() => onRequestSupplies(activeShelter)}
+              className="px-2.5 py-1.5 bg-[#B23A2E] hover:bg-[#8F271E] text-white text-[11px] font-bold rounded flex items-center gap-1.5 shadow-xs transition-transform active:scale-95"
+              title="Open requisition modal to request relief supplies from central admin"
+            >
+              <Package className="w-3.5 h-3.5" />
+              <span>REQ SUPPLIES FROM ADMIN</span>
+            </button>
+          )}
           <label className="text-[#14231F]/70 text-[11px] uppercase font-semibold">Assigned Shelter:</label>
           <select
             id="volunteer-assigned-shelter-select"
@@ -142,9 +155,23 @@ export default function VolunteerShelterStore({
             <AlertTriangle className="w-3.5 h-3.5 text-[#C97A2B]" />
             <span>What's Lacking / Critical Shortage Alert:</span>
           </div>
-          <span className="text-[10px] text-[#14231F]/60">
-            {deficits.length === 0 ? 'All reserves verified adequate' : `${deficits.length} deficit flags`}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[#14231F]/60">
+              {deficits.length === 0 ? 'All reserves verified adequate' : `${deficits.length} deficit flags`}
+            </span>
+            {deficits.length > 0 && onRequestSupplies && (
+              <button
+                type="button"
+                id="volunteer-deficit-req-supplies-btn"
+                onClick={() => onRequestSupplies(activeShelter)}
+                className="px-2.5 py-0.5 bg-[#B23A2E] hover:bg-[#8F271E] text-white text-[10px] font-bold rounded flex items-center gap-1 shadow-xs transition-colors"
+                title="Send formal restock requisition to admin"
+              >
+                <Package className="w-3 h-3" />
+                <span>REQ RELIEF FROM ADMIN</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {deficits.length === 0 ? (

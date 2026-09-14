@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Shield, AlertTriangle, ArrowRight, Loader2, MapPin } from 'lucide-react';
 
-export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
+export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts, onBackToLanding }) {
   const { register } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -38,20 +38,28 @@ export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    const cleanEmail = email.trim();
+    const cleanPassword = password.trim();
+
+    if (!name.trim() || !cleanEmail || !cleanPassword) {
+      setError('Please provide full name, email, and password.');
+      return;
+    }
+
     setLoading(true);
     try {
       await register({
         name: name.trim(),
-        email: email.trim().toLowerCase(),
-        password,
+        email: cleanEmail.toLowerCase(),
+        password: cleanPassword,
         phone: phone.trim(),
         role,
         lat: coords ? coords.lat : null,
         lng: coords ? coords.lng : null,
       });
     } catch (err) {
-      console.error('Registration failed', err);
-      setError(err.response?.data?.error || 'Registration failed. Try again.');
+      console.error('Registration error', err);
+      setError(err.response?.data?.error || 'Registration failed. Check format or role.');
     } finally {
       setLoading(false);
     }
@@ -60,6 +68,19 @@ export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts }) {
   return (
     <div className="min-h-[calc(100vh-60px)] flex items-center justify-center p-4 bg-[#F6F4EF]">
       <div className="max-w-md w-full bg-[#FFFFFF] border border-[#D8D3C7] rounded p-6 sm:p-8 shadow-xs">
+        {/* Back to Landing */}
+        {onBackToLanding && (
+          <button
+            type="button"
+            id="back-to-landing-btn"
+            onClick={onBackToLanding}
+            className="mb-4 text-xs font-mono text-[#14231F]/70 hover:text-[#14231F] flex items-center gap-1.5 transition-colors group"
+          >
+            <span className="group-hover:-translate-x-0.5 transition-transform font-bold">←</span>
+            <span>Back to Public Landing</span>
+          </button>
+        )}
+
         <div className="text-center mb-6">
           <div className="w-10 h-10 bg-[#14231F] text-[#F6F4EF] rounded flex items-center justify-center mx-auto mb-3">
             <Shield className="w-5 h-5 text-[#F6F4EF]" />

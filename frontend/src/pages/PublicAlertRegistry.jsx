@@ -44,7 +44,7 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-export default function PublicAlertRegistry({ onBackToLogin }) {
+export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) {
   // SMS Registration State
   const [phoneNumber, setPhoneNumber] = useState('');
   const [selectedRegion, setSelectedRegion] = useState('All Regions (National/Statewide)');
@@ -225,15 +225,30 @@ export default function PublicAlertRegistry({ onBackToLogin }) {
             </div>
           </div>
 
-          {onBackToLogin && (
-            <button
-              onClick={onBackToLogin}
-              className="flex items-center gap-1 text-xs font-mono font-semibold text-[#14231F] hover:text-[#2E6E4E] border border-[#D8D3C7] bg-[#EFECE4] px-3 py-1.5 rounded transition-colors"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Responders / Login</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onBackToLanding && (
+              <button
+                type="button"
+                id="back-to-landing-btn"
+                onClick={onBackToLanding}
+                className="flex items-center gap-1.5 text-xs font-mono font-semibold text-[#14231F] hover:text-[#2E6E4E] border border-[#D8D3C7] bg-[#FFFFFF] px-3 py-1.5 rounded transition-colors shadow-xs"
+              >
+                <span>←</span>
+                <span>Landing</span>
+              </button>
+            )}
+            {onBackToLogin && (
+              <button
+                type="button"
+                id="back-to-login-btn"
+                onClick={onBackToLogin}
+                className="flex items-center gap-1 text-xs font-mono font-semibold text-[#14231F] hover:text-[#2E6E4E] border border-[#D8D3C7] bg-[#EFECE4] px-3 py-1.5 rounded transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Responders / Login</span>
+              </button>
+            )}
+          </div>
         </div>
       </header>
 

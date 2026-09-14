@@ -15,6 +15,7 @@ import { Home, Bed, Droplets, Utensils, HeartPulse, Package, AlertTriangle, Chec
  */
 export default function AdminShelterRollup({
   shelters = [],
+  onViewSupplies,
   onSelectShelterCoords,
 }) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -127,12 +128,13 @@ export default function AdminShelterRollup({
               <th className="py-2.5 px-3">Key Supplies Status</th>
               <th className="py-2.5 px-3">What's Lacking</th>
               <th className="py-2.5 px-3">Last Audited</th>
+              <th className="py-2.5 px-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#D8D3C7] bg-[#FFFFFF]">
             {filteredShelters.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-6 text-center text-[#14231F]/60">
+                <td colSpan={6} className="py-6 text-center text-[#14231F]/60">
                   No shelters matched current filter criteria.
                 </td>
               </tr>
@@ -281,6 +283,19 @@ export default function AdminShelterRollup({
                           ⚠️ &gt;6h stale
                         </span>
                       )}
+                    </td>
+
+                    {/* Quick Requisition & Dispatch Action */}
+                    <td className="py-2.5 px-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => onViewSupplies && onViewSupplies(s)}
+                        className="px-2.5 py-1 bg-[#14231F] hover:bg-black text-white rounded text-[10px] font-bold inline-flex items-center gap-1 shadow-xs transition-colors"
+                        title="Review requisitions & dispatch relief supplies"
+                      >
+                        <Package className="w-3 h-3 text-[#4ADE80]" />
+                        <span>SUPPLIES & RELIEF</span>
+                      </button>
                     </td>
                   </tr>
                 );

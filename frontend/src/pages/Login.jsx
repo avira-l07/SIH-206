@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Shield, AlertTriangle, User, LifeBuoy, ArrowRight, Loader2 } from 'lucide-react';
 
-export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts }) {
+export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBackToLanding }) {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,6 +44,19 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts }) {
   return (
     <div className="min-h-[calc(100vh-60px)] flex items-center justify-center p-4 bg-[#F6F4EF]">
       <div className="max-w-md w-full bg-[#FFFFFF] border border-[#D8D3C7] rounded p-6 sm:p-8 shadow-xs">
+        {/* Back to Landing */}
+        {onBackToLanding && (
+          <button
+            type="button"
+            id="back-to-landing-btn"
+            onClick={onBackToLanding}
+            className="mb-4 text-xs font-mono text-[#14231F]/70 hover:text-[#14231F] flex items-center gap-1.5 transition-colors group"
+          >
+            <span className="group-hover:-translate-x-0.5 transition-transform font-bold">←</span>
+            <span>Back to Public Landing</span>
+          </button>
+        )}
+
         {/* Header */}
         <div className="text-center mb-6">
           <div className="w-10 h-10 bg-[#14231F] text-[#F6F4EF] rounded flex items-center justify-center mx-auto mb-3">

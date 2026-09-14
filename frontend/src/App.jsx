@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
 import Navbar from './components/Navbar';
+import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import CitizenDashboard from './pages/CitizenDashboard';
@@ -12,7 +13,7 @@ import { Shield, Loader2 } from 'lucide-react';
 
 function MainApp() {
   const { user, role, loading } = useAuth();
-  const [authView, setAuthView] = useState('login'); // 'login', 'register', or 'public-alerts'
+  const [authView, setAuthView] = useState('landing'); // 'landing', 'login', 'register', or 'public-alerts'
 
   if (loading) {
     return (
@@ -26,19 +27,36 @@ function MainApp() {
   }
 
   if (!user) {
+    if (authView === 'landing') {
+      return (
+        <LandingPage
+          onNavigateToLogin={() => setAuthView('login')}
+          onNavigateToRegister={() => setAuthView('register')}
+          onNavigateToPublicAlerts={() => setAuthView('public-alerts')}
+        />
+      );
+    }
+
     if (authView === 'public-alerts') {
-      return <PublicAlertRegistry onBackToLogin={() => setAuthView('login')} />;
+      return (
+        <PublicAlertRegistry
+          onBackToLogin={() => setAuthView('login')}
+          onBackToLanding={() => setAuthView('landing')}
+        />
+      );
     }
 
     return authView === 'login' ? (
       <Login
         onSwitchToRegister={() => setAuthView('register')}
         onSwitchToPublicAlerts={() => setAuthView('public-alerts')}
+        onBackToLanding={() => setAuthView('landing')}
       />
     ) : (
       <Register
         onSwitchToLogin={() => setAuthView('login')}
         onSwitchToPublicAlerts={() => setAuthView('public-alerts')}
+        onBackToLanding={() => setAuthView('landing')}
       />
     );
   }
