@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
 import Navbar from './components/Navbar';
@@ -9,11 +9,43 @@ import CitizenDashboard from './pages/CitizenDashboard';
 import VolunteerDashboard from './pages/VolunteerDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import PublicAlertRegistry from './pages/PublicAlertRegistry';
-import { Shield, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 function MainApp() {
-  const { user, role, loading } = useAuth();
+  const { user, role, loading, logout } = useAuth();
   const [authView, setAuthView] = useState('landing'); // 'landing', 'login', 'register', or 'public-alerts'
+  const [loggedInView, setLoggedInView] = useState(() => {
+    return window.location.hash === '#landing' ? 'landing' : 'dashboard';
+  });
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash === '#landing') {
+        setLoggedInView('landing');
+      } else if (window.location.hash === '#console' || window.location.hash === '') {
+        setLoggedInView('dashboard');
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const handleLogout = () => {
+    logout();
+    setAuthView('landing');
+    setLoggedInView('dashboard');
+    window.location.hash = '';
+  };
+
+  const handleNavigateToLanding = () => {
+    window.location.hash = 'landing';
+    setLoggedInView('landing');
+  };
+
+  const handleNavigateToDashboard = () => {
+    window.location.hash = 'console';
+    setLoggedInView('dashboard');
+  };
 
   if (loading) {
     return (
@@ -26,13 +58,16 @@ function MainApp() {
     );
   }
 
+  // Pre-login state
   if (!user) {
     if (authView === 'landing') {
       return (
         <LandingPage
+          user={null}
           onNavigateToLogin={() => setAuthView('login')}
           onNavigateToRegister={() => setAuthView('register')}
           onNavigateToPublicAlerts={() => setAuthView('public-alerts')}
+          onNavigateToDashboard={() => setAuthView('login')}
         />
       );
     }
@@ -61,9 +96,26 @@ function MainApp() {
     );
   }
 
+  // Authenticated, user chose to view Public Landing Page
+  if (loggedInView === 'landing') {
+    return (
+      <LandingPage
+        user={user}
+        onNavigateToDashboard={handleNavigateToDashboard}
+        onNavigateToLogin={handleNavigateToDashboard}
+        onNavigateToRegister={handleNavigateToDashboard}
+        onNavigateToPublicAlerts={() => setAuthView('public-alerts')}
+      />
+    );
+  }
+
+  // Authenticated Console / Dashboard view
   return (
     <div className="min-h-screen bg-[#F6F4EF] text-[#14231F] flex flex-col selection:bg-[#B23A2E]/20">
-      <Navbar />
+      <Navbar
+        onNavigateToLanding={handleNavigateToLanding}
+        onLogout={handleLogout}
+      />
       <main className="flex-1 flex flex-col">
         {role === 'ADMIN' && <AdminDashboard />}
         {role === 'VOLUNTEER' && <VolunteerDashboard />}
