@@ -178,10 +178,10 @@ const REGION_COORDINATES = {
 const MAP_LAYERS = {
   voyager: {
     id: 'voyager',
-    name: 'Tactical (Humanitarian OSM)',
-    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="https://www.hotosm.org/">HOT</a>',
-    subdomains: 'abc',
+    name: 'Tactical (SOI Aligned)',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap',
+    subdomains: 'abcd',
     maxZoom: 19,
   },
   topo: {
