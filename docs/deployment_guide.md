@@ -36,11 +36,11 @@ git push -u origin main
    - **Name:** `sih26206-api`
    - **Root Directory:** `backend`
    - **Runtime:** `Node`
-   - **Build Command:** `npm install && npx prisma generate`
-   - **Start Command:** `node src/server.js`
+   - **Build Command:** `npm install && npm run build`
+   - **Start Command:** `npm start`
    - **Plan:** Free
 4. Add **Environment Variables** under the Environment tab:
-   - `DATABASE_URL`: *(Your Neon PostgreSQL connection string from Step 1, or `file:/var/data/dev.db` if using Render Persistent Disk)*
+   - `DATABASE_URL`: *(Your Neon/PostgreSQL connection string like `postgresql://...`, or `file:/var/data/dev.db` if using Render Persistent Disk)*
    - `JWT_SECRET`: `sih26206-disaster-response-jwt-secret-key-2026`
    - `CORS_ORIGIN`: `*` *(or your Vercel URL)*
    - `OPENWEATHER_API_KEY`: `mock_mode_active` *(or real key)*

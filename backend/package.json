@@ -4,11 +4,11 @@
   "description": "Backend API and WebSocket server for SIH26206 Disaster Management Platform",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "start": "node scripts/prepare-schema.js && node src/server.js",
+    "dev": "node scripts/prepare-schema.js && nodemon src/server.js",
     "build": "node scripts/build.js",
     "seed": "node prisma/seed.js",
-    "postinstall": "prisma generate"
+    "postinstall": "node scripts/prepare-and-generate.js"
   },
   "dependencies": {
     "@prisma/client": "^6.4.1",

@@ -1,10 +1,12 @@
 const { execSync } = require('child_process');
 const path = require('path');
+const prepareSchema = require('./prepare-schema');
 
-process.env.DATABASE_URL = process.env.DATABASE_URL || 'file:./dev.db';
+// Automatically configure provider (postgresql vs sqlite) and fix DATABASE_URL
+prepareSchema();
 
-console.log('?? Running SIH26206 backend cloud build with SQLite datasource...');
-console.log('Using DATABASE_URL:', process.env.DATABASE_URL);
+const isPostgres = (process.env.DATABASE_URL || '').startsWith('postgres');
+console.log(`📦 Running SIH26206 backend cloud build with ${isPostgres ? 'PostgreSQL' : 'SQLite'} datasource...`);
 
 try {
   console.log('1. Generating Prisma client...');
@@ -16,8 +18,8 @@ try {
   console.log('3. Seeding database with initial users, shelters, alerts...');
   execSync('node prisma/seed.js', { stdio: 'inherit', env: process.env });
 
-  console.log('? Build & database initialization completed successfully!');
+  console.log('✅ Build & database initialization completed successfully!');
 } catch (err) {
-  console.error('? Build failed:', err.message);
+  console.error('❌ Build failed:', err.message);
   process.exit(1);
 }
