@@ -18,6 +18,22 @@ model User {
   lat           Float?
   lng           Float?
   trusted       Boolean              @default(false)
+  onDuty        Boolean?
+  locationUpdatedAt DateTime?
+  tokenVersion Int @default(0)
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
+  identityReviewedAt DateTime?
+  identityReviewedBy Int?
+  identityEvidence String?
+  serviceRegion String?
+  mfaSecret String?
+  mfaPendingSecret String?
+  mfaPendingAt DateTime?
+  mfaEnabledAt DateTime?
+  mfaLastStep Int?
+  mfaRecoveryHashes String?
+  notifications Notification[]
   safetyStatus  String               @default("UNKNOWN") // SAFE, NEEDS_HELP, UNKNOWN
   safetyUpdatedAt DateTime?
   createdAt     DateTime             @default(now())
@@ -26,6 +42,7 @@ model User {
   confirmations HazardConfirmation[]
   civilianAssets CivilianAsset[]
   supplyDistributions SupplyDistribution[]
+  routeHelpPoints RouteHelpPoint[]
 }
 
 model Alert {
@@ -40,6 +57,9 @@ model Alert {
   active     Boolean   @default(true)
   createdAt  DateTime  @default(now())
   deletedAt  DateTime? // soft-delete: null = visible, non-null = deleted (audit trail)
+  sourceKind String @default("MANUAL")
+  observedAt DateTime?
+  evidence String?
 }
 
 model SOSRequest {
@@ -59,13 +79,48 @@ model SOSRequest {
   status                   String   @default("PENDING") // PENDING, VERIFIED, EN_ROUTE, ON_SCENE, EVACUATED, HANDED_OVER_TO_MEDICAL, RESOLVED, CANCELLED
   triageTag                String?  // IMMEDIATE, DELAYED, MINOR, DECEASED
   cancelReason             String?
+  assignedAt               DateTime?
+  acknowledgmentDueAt      DateTime?
+  assignmentAcknowledgedAt DateTime?
+  handoffRequestedAt       DateTime?
+  handoffReason            String?
   assignedVolunteerId      Int?
+  region                   String?
+  escalatedAt              DateTime?
   citizenConfirmedResolved Boolean?
   batteryLevel             Int?
   reportedByProxy          Boolean  @default(false)
   subjectDescription       String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
+  events                   RescueEvent[]
+}
+
+model RescueEvent {
+  id        Int @id @default(autoincrement())
+  sosId     Int
+  sos       SOSRequest @relation(fields: [sosId], references: [id], onDelete: Cascade)
+  kind      String
+  fromStatus String?
+  toStatus  String
+  actorId   Int?
+  actorName String
+  actorRole String
+  detail    String?
+  createdAt DateTime @default(now())
+  @@index([sosId, id])
+}
+
+model Notification {
+  id        Int @id @default(autoincrement())
+  userId    Int
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  kind      String
+  sosId     Int?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId, id])
 }
 
 model Shelter {
@@ -80,9 +135,9 @@ model Shelter {
   waterThreshold        Int              @default(200)
   rationsUnitsRemaining Int?
   rationsThreshold      Int              @default(50)
-  medicalKitsRemaining  Int?             @default(25)
+  medicalKitsRemaining  Int?
   medicalThreshold      Int              @default(10)
-  blanketsRemaining     Int?             @default(120)
+  blanketsRemaining     Int?
   blanketsThreshold     Int              @default(30)
   waterOk               Boolean          @default(true)
   rationsOk             Boolean          @default(true)
@@ -93,6 +148,7 @@ model Shelter {
   active                Boolean          @default(true)
   lastAuditedAt         DateTime         @default(now())
   createdAt             DateTime         @default(now())
+  region                String?
   supplies              SupplyRequest[]
   shipments             SupplyShipment[]
   supplyDistributions   SupplyDistribution[]
@@ -127,6 +183,7 @@ model HazardReport {
   photoUrl           String?              // Base64 encoded image string
   confidenceTier     String               @default("GREY") // GREY, AMBER, RED, DISPUTED, RESOLVED
   confirmationsCount Int                  @default(0)
+  region             String?
   createdAt          DateTime             @default(now())
   confirmations      HazardConfirmation[]
 }
@@ -146,6 +203,7 @@ model HazardConfirmation {
 
 model OfflineSyncLog {
   id         Int       @id @default(autoincrement())
+  idempotencyKey String? @unique
   rawPayload String
   parsedData String    // JSON stringified parsed payload
   sourceNode String    @default("SMS Gateway")
@@ -166,6 +224,8 @@ model CivilianAsset {
   lat         Float
   lng         Float
   available   Boolean  @default(true)
+  region      String?
+  activeReservationId Int? @unique
   createdAt   DateTime @default(now())
 }
 
@@ -184,6 +244,197 @@ model MissingPerson {
   shelterName      String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  reportedByUserId  Int?
+  region           String?
+  matchedIntakeId  Int?
+}
+
+model AssetReservation {
+  id Int @id @default(autoincrement())
+  assetId Int
+  sosId Int
+  requestedById Int
+  ownerId Int
+  region String?
+  status String @default("REQUESTED")
+  reason String
+  expiresAt DateTime
+  decidedAt DateTime?
+  releasedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([assetId, status])
+  @@index([sosId, status])
+}
+
+model ShelterIntake {
+  id Int @id @default(autoincrement())
+  shelterId Int
+  region String?
+  fullName String
+  age Int?
+  description String
+  consentToMatching Boolean @default(false)
+  status String @default("PRESENT")
+  admittedById Int
+  admittedAt DateTime @default(now())
+  departedAt DateTime?
+  departureReason String?
+  idempotencyKey String @unique
+  payloadHash String
+  updatedAt DateTime @updatedAt
+  @@index([shelterId, status])
+}
+
+model FamilyMatch {
+  id Int @id @default(autoincrement())
+  missingPersonId Int
+  intakeId Int
+  reviewedById Int
+  decision String
+  reason String
+  createdAt DateTime @default(now())
+  @@index([missingPersonId, createdAt])
+}
+
+model RecoveryCase {
+  id Int @id @default(autoincrement())
+  userId Int
+  region String
+  kind String
+  description String
+  status String @default("REPORTED")
+  assignedToId Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  events RecoveryEvent[]
+  @@index([userId, id])
+}
+
+model RecoveryEvent {
+  id Int @id @default(autoincrement())
+  caseId Int
+  case RecoveryCase @relation(fields:[caseId], references:[id], onDelete:Cascade)
+  actorId Int
+  status String
+  note String
+  createdAt DateTime @default(now())
+}
+
+model PreparednessPlan {
+  userId Int @id
+  checklist String
+  meetingPoint String
+  emergencyContact String
+  language String @default("en")
+  drillCompletedAt DateTime?
+  updatedAt DateTime @updatedAt
+}
+
+model EvacuationCorridor {
+  id Int @id @default(autoincrement())
+  name String
+  region String
+  mode String
+  points String
+  reviewNote String
+  reviewedById Int
+  reviewedAt DateTime @default(now())
+  expiresAt DateTime
+  active Boolean @default(true)
+  helpPoints RouteHelpPoint[]
+}
+
+model EvacuationAdvisory {
+  id Int @id @default(autoincrement())
+  alertId Int @unique
+  region String
+  hazardType String
+  action String
+  probability Float?
+  sourceName String
+  sourceReference String
+  assessmentNote String
+  instructions String
+  lat Float
+  lng Float
+  radiusKm Float
+  observedAt DateTime
+  expiresAt DateTime
+  publishedById Int
+  publishedAt DateTime @default(now())
+  active Boolean @default(true)
+  @@index([region, active, expiresAt])
+}
+
+model RouteHelpPoint {
+  id Int @id @default(autoincrement())
+  corridorId Int
+  corridor EvacuationCorridor @relation(fields: [corridorId], references: [id], onDelete: Restrict)
+  assignedVolunteerId Int
+  volunteer User @relation(fields: [assignedVolunteerId], references: [id], onDelete: Restrict)
+  name String
+  region String
+  lat Float
+  lng Float
+  instructions String
+  publicContact String?
+  createdById Int
+  confirmedAt DateTime?
+  expiresAt DateTime
+  active Boolean @default(true)
+  updatedAt DateTime @updatedAt
+  @@index([region, active, expiresAt])
+  @@index([assignedVolunteerId, active])
+}
+
+model WarningReview {
+  id Int @id @default(autoincrement())
+  region String
+  telemetry String
+  expectedHazard String
+  predictedHazard String
+  sourceReference String
+  reviewedById Int
+  createdAt DateTime @default(now())
+}
+
+model DeliveryJob {
+  id Int @id @default(autoincrement())
+  alertId Int?
+  channel String
+  recipient String
+  payload String
+  key String @unique
+  status String @default("QUEUED")
+  attempts Int @default(0)
+  providerId String? @unique
+  nextAttemptAt DateTime @default(now())
+  leaseUntil DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, nextAttemptAt])
+}
+
+model AccountChallenge {
+  id Int @id @default(autoincrement())
+  userId Int
+  kind String
+  tokenHash String @unique
+  target String
+  attempts Int @default(0)
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId, kind, createdAt])
+}
+
+model RateLimitBucket {
+  id String @id
+  hits Int @default(1)
+  resetAt DateTime
+  @@index([resetAt])
 }
 
 model SupplyRequest {
@@ -217,7 +468,20 @@ model PhoneRegistration {
   id          Int      @id @default(autoincrement())
   phoneNumber String   @unique
   region      String?
+  verifiedAt DateTime?
   createdAt   DateTime @default(now())
+}
+
+model PublicPhoneChallenge {
+  id String @id
+  phoneNumber String
+  region String?
+  codeHash String
+  attempts Int @default(0)
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([phoneNumber, createdAt])
 }
 
 model PushSubscription {

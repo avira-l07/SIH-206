@@ -11,6 +11,7 @@
 let twilioClient = null;
 
 function getTwilioClient() {
+  if (process.env.DISABLE_EXTERNAL_DELIVERY === 'true') return null;
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
@@ -83,7 +84,7 @@ async function sendBroadcastSMS(phoneNumbers = [], message) {
 
     return {
       attempted: phoneNumbers.length,
-      delivered: phoneNumbers.length,
+      delivered: 0,
       failed: 0,
       simulated: true,
       results: phoneNumbers.map((phone) => ({
@@ -130,7 +131,7 @@ async function sendBroadcastSMS(phoneNumbers = [], message) {
   const results = settled.map((s, idx) =>
     s.status === 'fulfilled'
       ? s.value
-      : { phone: phoneNumbers[idx], status: 'failed', error: s.reason?.message }
+      : { phone: maskPhoneNumber(phoneNumbers[idx]), status: 'failed', error: s.reason?.message }
   );
 
   const delivered = results.filter((r) => r.status === 'sent').length;

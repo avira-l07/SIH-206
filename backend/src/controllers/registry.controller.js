@@ -10,6 +10,10 @@
  */
 
 const prisma = require('../db');
+const { getIO } = require('../sockets/socketHandler');
+function changed() { try { getIO().emit('registry:changed'); } catch { /* no server in standalone tools */ } }
+function smsConfigured() { return process.env.DISABLE_EXTERNAL_DELIVERY !== 'true' && /^AC[a-f\d]{32}$/i.test(process.env.TWILIO_ACCOUNT_SID || '') && !!process.env.TWILIO_AUTH_TOKEN && !!process.env.TWILIO_FROM_NUMBER; }
+const { isAllowedPushEndpoint } = require('../config/security');
 const { normalizePhoneNumber } = require('../services/sms.service');
 const { getVapidPublicKey } = require('../services/push.service');
 
@@ -75,6 +79,7 @@ async function registerPhone(req, res) {
     }
 
     const normalized = normalizePhoneNumber(cleaned);
+    if (!/^\+[1-9]\d{6,14}$/.test(normalized || '')) return res.status(400).json({ error: 'A valid international phone number is required' });
     const assignedRegion = region && typeof region === 'string' ? region.trim() : null;
 
     // Upsert on phoneNumber to prevent duplicates and allow region update
@@ -87,15 +92,16 @@ async function registerPhone(req, res) {
       },
     });
 
+    changed();
     // Explicitly return success message with ZERO phone number echo
     return res.status(200).json({
       success: true,
-      message: `Phone number saved to emergency broadcast registry for ${assignedRegion || 'All Regions'}. You will receive SMS alerts when emergency broadcasts are dispatched for your area.`,
+      message: `Phone number saved to emergency broadcast registry for ${assignedRegion || 'All Regions'}. Delivery requires a configured SMS provider.`,
       region: assignedRegion || 'All Regions',
     });
   } catch (error) {
     console.error('Error registering phone number:', error);
-    return res.status(500).json({ error: 'Failed to complete registration' });
+    return res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to complete registration' });
   }
 }
 
@@ -114,11 +120,11 @@ async function registerPush(req, res) {
   try {
     const { endpoint, keys, region } = req.body;
 
-    if (!endpoint || typeof endpoint !== 'string' || !endpoint.startsWith('http')) {
+    if (!endpoint || typeof endpoint !== 'string' || !isAllowedPushEndpoint(endpoint)) {
       return res.status(400).json({ error: 'Valid push subscription endpoint is required' });
     }
 
-    if (!keys || typeof keys !== 'object') {
+    if (!keys || typeof keys !== 'object' || Array.isArray(keys) || !/^[A-Za-z0-9_-]{87}=?$/.test(keys.p256dh || '') || !/^[A-Za-z0-9_-]{22}==?$|^[A-Za-z0-9_-]{22}$/.test(keys.auth || '')) {
       return res.status(400).json({ error: 'Valid subscription cryptographic keys are required' });
     }
 
@@ -139,6 +145,7 @@ async function registerPush(req, res) {
       },
     });
 
+    changed();
     return res.status(200).json({
       success: true,
       message: 'Browser registered successfully for Web Push emergency alerts.',
@@ -146,7 +153,7 @@ async function registerPush(req, res) {
     });
   } catch (error) {
     console.error('Error registering push subscription:', error);
-    return res.status(500).json({ error: 'Failed to save push subscription' });
+    return res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to save push subscription' });
   }
 }
 
@@ -156,20 +163,20 @@ async function registerPush(req, res) {
  */
 async function getRegistryStats(req, res) {
   try {
-    const [totalPhones, totalPushSubs] = await Promise.all([
+    const [totalPhones, totalPushSubs,verifiedPhones] = await Promise.all([
       prisma.phoneRegistration.count(),
-      prisma.pushSubscription.count(),
+      prisma.pushSubscription.count(),prisma.phoneRegistration.count({where:{verifiedAt:{not:null}}}),
     ]);
 
     // Only aggregated counts returned — NO raw phone numbers or endpoints
     return res.status(200).json({
-      totalPhones,
+      totalPhones,verifiedPhones,
       totalPushSubs,
-      channelsActive: ['SMS_BROADCAST', 'WEB_PUSH_NOTIFICATION', 'IN_APP_MAX_PRIORITY'],
+      channelsActive: ['IN_APP_MAX_PRIORITY', ...(smsConfigured() ? ['SMS_BROADCAST'] : []), ...(require('../services/delivery.service').configured('PUSH') ? ['WEB_PUSH_NOTIFICATION'] : [])],
     });
   } catch (error) {
     console.error('Error fetching registry stats:', error);
-    return res.status(500).json({ error: 'Failed to fetch registry stats' });
+    return res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch registry stats' });
   }
 }
 
@@ -186,7 +193,7 @@ async function getVapidKey(req, res) {
     return res.status(200).json({ publicKey });
   } catch (error) {
     console.error('Error retrieving VAPID public key:', error);
-    return res.status(500).json({ error: 'Failed to retrieve VAPID key' });
+    return res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to retrieve VAPID key' });
   }
 }
 

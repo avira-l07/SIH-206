@@ -1,124 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import api from '../services/api';
+import { useSocket } from '../context/SocketContext';
+import { subscribePush } from '../services/push';
+import { calculateDistanceKm } from '../services/haversine';
 import './LandingPage.css';
-
-const DISASTERS = [
-  {
-    id: 1,
-    type: 'flood',
-    title: 'Severe Riverine Flood Alert',
-    lat: 26.1800,
-    lng: 91.7500,
-    location: 'Guwahati & Kamrup, Assam',
-    severity: 'high',
-    timestamp: 'Just now (Updated)',
-    description: 'Brahmaputra river level exceeded warning mark by 1.4m. Low-lying wards under inundation threat.',
-    radius: 75000,
-    recommendedAction: 'Evacuate to elevated shelters. Avoid highway NH-27 transit corridor.'
-  },
-  {
-    id: 2,
-    type: 'landslide',
-    title: 'Major Landslide Threat & Road Block',
-    lat: 31.1048,
-    lng: 77.1734,
-    location: 'Shimla-Kinnaur Highway, Himachal Pradesh',
-    severity: 'warning',
-    timestamp: '25 mins ago',
-    description: 'Continuous torrential rains have saturated hillside soil. Rockfall risk on upper bypass.',
-    radius: 45000,
-    recommendedAction: 'Halt non-essential hill transit. Use designated bypass corridors.'
-  },
-  {
-    id: 3,
-    type: 'cyclone',
-    title: 'Severe Cyclonic Storm Warning',
-    lat: 18.2000,
-    lng: 86.4000,
-    location: 'Bay of Bengal — Coastal Odisha',
-    severity: 'high',
-    timestamp: '1 hour ago',
-    description: 'Deep depression intensifying into severe cyclone with sustained wind gusts up to 110 km/h.',
-    radius: 120000,
-    recommendedAction: 'Complete beach-side evacuation. Fishermen advised total suspension of offshore activity.'
-  },
-  {
-    id: 4,
-    type: 'earthquake',
-    title: 'Seismic Tremor Recorded (M 4.6)',
-    lat: 28.7041,
-    lng: 77.1025,
-    location: 'Delhi NCR & Haryana Border',
-    severity: 'warning',
-    timestamp: '2 hours ago',
-    description: 'Moderate depth tremor recorded with subsequent localized tremors. Structural inspections underway.',
-    radius: 35000,
-    recommendedAction: 'Inspect older masonry structures. Avoid elevators and congested stairwells.'
-  },
-  {
-    id: 5,
-    type: 'wildfire',
-    title: 'Forest Fire Ridge Outbreak',
-    lat: 30.0668,
-    lng: 79.0193,
-    location: 'Chamoli Reserve Forest, Uttarakhand',
-    severity: 'warning',
-    timestamp: '3 hours ago',
-    description: 'High wind velocity causing rapid forest floor fire spread across upper ridge perimeter.',
-    radius: 30000,
-    recommendedAction: 'Maintain buffer perimeter. Report new smoke plumes to forest range control.'
-  },
-  {
-    id: 6,
-    type: 'flood',
-    title: 'Urban Inundation Advisory',
-    lat: 13.0827,
-    lng: 80.2707,
-    location: 'Chennai Coastal Basin, Tamil Nadu',
-    severity: 'warning',
-    timestamp: '4 hours ago',
-    description: 'Heavy precipitation causing localized arterial road waterlogging. Storm drains discharging at peak.',
-    radius: 28000,
-    recommendedAction: 'Follow traffic police diversions. Stay clear of submerged electrical substations.'
-  }
-];
-
-const RESOURCES = [
-  {
-    id: 101,
-    type: 'resource',
-    category: 'shelter',
-    name: 'Doon Central Relief Center',
-    lat: 30.3255,
-    lng: 78.0410,
-    location: 'Dehradun, Uttarakhand',
-    status: 'Open · 72% Capacity',
-    services: 'Hot Food, Emergency Beds, Clean Water, First Aid'
-  },
-  {
-    id: 102,
-    type: 'resource',
-    category: 'hospital',
-    name: 'Doon District Trauma Center',
-    lat: 30.3165,
-    lng: 78.0322,
-    location: 'Dehradun, Uttarakhand',
-    status: 'Open · 24/7 ER Ready',
-    services: 'Critical Trauma Care, Ambulance Fleet, Blood Bank'
-  },
-  {
-    id: 103,
-    type: 'resource',
-    category: 'relief',
-    name: 'Guwahati Northeast Relief Depot',
-    lat: 26.1500,
-    lng: 91.7500,
-    location: 'Guwahati, Assam',
-    status: 'Open · Active Dispatch',
-    services: 'Ration Packets, Water Purification, Inflatable Boats'
-  }
-];
 
 const TYPE_EMOJI = {
   flood: '🌊',
@@ -174,13 +60,44 @@ function createCustomMarker(emoji, color, isPulse = false) {
 }
 
 export default function LandingPage({
+  user,
   onNavigateToLogin,
   onNavigateToRegister,
   onNavigateToPublicAlerts
 }) {
+  const { socket } = useSocket();
+  const [DISASTERS, setDisasters] = useState([]);
+  const [RESOURCES, setResources] = useState([]);
+  const [feedError, setFeedError] = useState('');
+  const [feedLoading, setFeedLoading] = useState(true);
+  const [locatedCoords, setLocatedCoords] = useState(null);
+  const [legalView, setLegalView] = useState(null);
+  const loadLiveData = async () => {
+    const results = await Promise.allSettled([api.get('/alerts'), api.get('/shelters')]);
+    const [alerts, shelters] = results;
+    if (alerts.status === 'fulfilled') setDisasters((alerts.value.data.alerts || []).map(alert => ({
+      id: alert.id, type: alert.hazardType === 'FIRE' ? 'wildfire' : alert.hazardType.toLowerCase(),
+      title: alert.hazardType + ' ' + alert.severity, lat: alert.lat, lng: alert.lng,
+      location: alert.region, severity: alert.severity === 'CRITICAL' ? 'high' : 'warning',
+      timestamp: new Date(alert.createdAt).toLocaleString(), description: alert.message,
+      radius: alert.radiusKm * 1000, recommendedAction: alert.message
+    })));
+    if (shelters.status === 'fulfilled') setResources((shelters.value.data.shelters || []).map(shelter => ({
+      ...shelter, type: 'resource', category: 'shelter', location: shelter.address,
+      status: shelter.status, services: [shelter.waterLitersRemaining == null ? 'Water quantity unaudited' : shelter.waterOk ? 'Reported water available' : 'Water shortage', shelter.rationsUnitsRemaining == null ? 'Rations quantity unaudited' : shelter.rationsOk ? 'Reported rations available' : 'Rations shortage'].join(', ')
+    })));
+    setFeedError(results.some(result => result.status === 'rejected') ? 'Some live data is unavailable. Retry before relying on the map.' : '');
+    setFeedLoading(false);
+  };
+  useEffect(() => {
+    loadLiveData();
+    const timer = setInterval(loadLiveData, 30000);
+    const events = ['alert:new', 'alert:deactivated', 'alert:deleted', 'shelter:audit_updated', 'shelter:occupancy_changed'];
+    events.forEach(event => socket?.on(event, loadLiveData));
+    return () => { clearInterval(timer); events.forEach(event => socket?.off(event, loadLiveData)); };
+  }, [socket]);
+  const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [langMenuOpen, setLangMenuOpen] = useState(false);
-  const [currentLang, setCurrentLang] = useState('English');
   const [activeFilter, setActiveFilter] = useState('all');
   const [activeLayer, setActiveLayer] = useState('street'); // street, topo, sat
   const [selectedAlertId, setSelectedAlertId] = useState(null);
@@ -189,8 +106,7 @@ export default function LandingPage({
   // Form State
   const [subRegion, setSubRegion] = useState('');
   const [subPhone, setSubPhone] = useState('');
-  const [subEmail, setSubEmail] = useState('');
-  const [subChannels, setSubChannels] = useState({ sms: true, push: true, email: false });
+  const [subChannels, setSubChannels] = useState({ sms: true, push: false });
   const [subNote, setSubNote] = useState('');
   const [subLoading, setSubLoading] = useState(false);
 
@@ -199,6 +115,8 @@ export default function LandingPage({
   const heroMapRef = useRef(null);
   const mainMapContainerRef = useRef(null);
   const mainMapRef = useRef(null);
+  const viewportRef = useRef({ center: [22.5, 82.0], zoom: 5 });
+  const baseLayerRef = useRef('street');
   const mainLayersRef = useRef({});
   const mapItemsRef = useRef([]);
   const userLocMarkerRef = useRef(null);
@@ -242,34 +160,12 @@ export default function LandingPage({
 
     L.tileLayer(streetTileUrl, streetTileOptions).addTo(hMap);
 
-    L.circle([30.12, 78.85], { radius: 32000, color: '#DC2626', fillColor: '#DC2626', fillOpacity: 0.22, weight: 1.5 }).addTo(hMap);
-    L.circle([30.55, 78.18], { radius: 24000, color: '#EA580C', fillColor: '#EA580C', fillOpacity: 0.22, weight: 1.5 }).addTo(hMap);
-
-    L.marker([30.12, 78.85], { icon: createCustomMarker('🌊', '#DC2626', true) }).addTo(hMap).bindPopup(`
-      <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
-        <strong style="color:#DC2626;font-size:13.5px;">Flash Flood Zone</strong><br>
-        <span style="font-size:12px;color:#4B5A70;">Alaknanda River Basin</span>
-      </div>
-    `);
-    L.marker([30.55, 78.18], { icon: createCustomMarker('⛰️', '#EA580C') }).addTo(hMap).bindPopup(`
-      <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
-        <strong style="color:#EA580C;font-size:13.5px;">Landslide Sector</strong><br>
-        <span style="font-size:12px;color:#4B5A70;">Tehri Garhwal Ridges</span>
-      </div>
-    `);
-    L.marker([30.32, 78.04], { icon: createCustomMarker('🏠', '#1E5FE0') }).addTo(hMap).bindPopup(`
-      <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
-        <strong style="color:#1E5FE0;font-size:13.5px;">Dehradun Relief Base</strong><br>
-        <span style="font-size:12px;color:#4B5A70;">Open &amp; Equipped</span>
-      </div>
-    `);
-    L.marker([29.95, 78.16], { icon: createCustomMarker('✅', '#17924E') }).addTo(hMap).bindPopup(`
-      <div style="font-family:'Inter',sans-serif;padding:8px 6px;">
-        <strong style="color:#17924E;font-size:13.5px;">Haridwar Safe Zone</strong><br>
-        <span style="font-size:12px;color:#4B5A70;">Normal Status</span>
-      </div>
-    `);
-
+    DISASTERS.forEach(d => {
+      const color = d.severity === 'high' ? SEV_COLOR.high : SEV_COLOR.warning;
+      L.circle([d.lat, d.lng], { radius: d.radius, color, fillOpacity: 0.15 }).addTo(hMap);
+      L.marker([d.lat, d.lng], { icon: createCustomMarker(TYPE_EMOJI[d.type] || '⚠️', color) }).addTo(hMap).bindPopup(escapeHTML(d.title));
+    });
+    RESOURCES.forEach(r => L.marker([r.lat, r.lng], { icon: createCustomMarker('🏠', SEV_COLOR.resource) }).addTo(hMap).bindPopup(escapeHTML(r.name)));
     heroMapRef.current = hMap;
 
     return () => {
@@ -278,7 +174,7 @@ export default function LandingPage({
         heroMapRef.current = null;
       }
     };
-  }, []);
+  }, [DISASTERS, RESOURCES]);
 
   // Initialize Main Map
   useEffect(() => {
@@ -294,13 +190,13 @@ export default function LandingPage({
       scrollWheelZoom: false,
       smoothWheelZoom: true,
       wheelDebounceTime: 40
-    }).setView([22.5, 82.0], 5);
+    }).setView(viewportRef.current.center, viewportRef.current.zoom);
 
     const sLayer = L.tileLayer(streetTileUrl, streetTileOptions);
     const tLayer = L.tileLayer(topoTileUrl, topoTileOptions);
     const satLayer = L.tileLayer(satTileUrl, satTileOptions);
 
-    sLayer.addTo(mMap);
+    ({ street: sLayer, topo: tLayer, sat: satLayer }[baseLayerRef.current] || sLayer).addTo(mMap);
     mainLayersRef.current = { street: sLayer, topo: tLayer, sat: satLayer };
 
     mMap.on('click', () => {
@@ -329,7 +225,7 @@ export default function LandingPage({
         dashArray: isCritical ? '6, 6' : null
       }).addTo(mMap);
 
-      circle.bindTooltip(`Hazard Radius: ${(d.radius / 1000).toFixed(0)} km around ${d.location}`, {
+      circle.bindTooltip(`Hazard Radius: ${(d.radius / 1000).toFixed(0)} km around ${escapeHTML(d.location)}`, {
         sticky: true
       });
 
@@ -344,11 +240,11 @@ export default function LandingPage({
             <span class="popup-badge">${d.severity === 'high' ? 'CRITICAL' : 'WARNING'}</span>
           </div>
           <div class="popup-body">
-            <h4>${d.title}</h4>
-            <div class="ploc">📍 ${d.location}</div>
-            <div class="pdesc">${d.description}</div>
+            <h4>${escapeHTML(d.title)}</h4>
+            <div class="ploc">📍 ${escapeHTML(d.location)}</div>
+            <div class="pdesc">${escapeHTML(d.description)}</div>
             <div class="pact">
-              <strong>Recommended Action:</strong><br>${d.recommendedAction}
+              <strong>Recommended Action:</strong><br>${escapeHTML(d.recommendedAction)}
             </div>
             <div style="display:flex;gap:8px;margin-top:10px;">
               <a href="https://www.google.com/maps/search/?api=1&query=${d.lat},${d.lng}" target="_blank" rel="noopener" class="popup-btn" style="background:#0B1F3D;">
@@ -385,9 +281,9 @@ export default function LandingPage({
             <span class="popup-badge">ACTIVE</span>
           </div>
           <div class="popup-body">
-            <h4>${r.name}</h4>
-            <div class="ploc">📍 ${r.location}</div>
-            <div class="pdesc"><strong>Status:</strong> ${r.status}<br><strong>Services:</strong> ${r.services}</div>
+            <h4>${escapeHTML(r.name)}</h4>
+            <div class="ploc">📍 ${escapeHTML(r.location)}</div>
+            <div class="pdesc"><strong>Status:</strong> ${escapeHTML(r.status)}<br><strong>Services:</strong> ${escapeHTML(r.services)}</div>
             <a href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lng}" target="_blank" rel="noopener" class="popup-btn">
               Navigate with GPS Directions →
             </a>
@@ -416,15 +312,18 @@ export default function LandingPage({
     return () => {
       clearTimeout(t1);
       if (mainMapRef.current) {
+        viewportRef.current = { center: mainMapRef.current.getCenter(), zoom: mainMapRef.current.getZoom() };
+        userLocMarkerRef.current = null; userLocCircleRef.current = null;
         mainMapRef.current.remove();
         mainMapRef.current = null;
       }
     };
-  }, []);
+  }, [DISASTERS, RESOURCES]);
 
   // Update map layer on activeLayer state change
   const handleSwitchLayer = (layerName) => {
     setActiveLayer(layerName);
+    baseLayerRef.current = layerName;
     const mMap = mainMapRef.current;
     if (!mMap || !mainLayersRef.current) return;
     const { street, topo, sat } = mainLayersRef.current;
@@ -461,7 +360,7 @@ export default function LandingPage({
         if (item.circle && mMap.hasLayer(item.circle)) mMap.removeLayer(item.circle);
       }
     });
-  }, [activeFilter]);
+  }, [activeFilter, DISASTERS, RESOURCES]);
 
   // Click on alert in sidebar
   const handleAlertClick = (d) => {
@@ -521,6 +420,7 @@ export default function LandingPage({
       (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+        setLocatedCoords({ lat, lng });
         const mMap = mainMapRef.current;
         if (!mMap) return;
 
@@ -547,7 +447,7 @@ export default function LandingPage({
         mMap.flyTo([lat, lng], 9, { duration: 1.2 });
         showToast('Position acquired!', '✅');
       },
-      (err) => {
+      () => {
         showToast('Unable to acquire location (permission denied or timeout)', '⚠️');
       },
       { enableHighAccuracy: true, timeout: 6000 }
@@ -557,32 +457,17 @@ export default function LandingPage({
   // Handle direct alert subscription form submit
   const handleSubscribeSubmit = async (e) => {
     e.preventDefault();
-    if (!subPhone.trim()) {
-      showToast('Please enter a mobile phone number', '⚠️');
-      return;
+    if (!subChannels.sms && !subChannels.push) { setSubNote('Select at least one delivery channel'); return; }
+    setSubLoading(true); setSubNote('');
+    const operations = [];
+    if (subChannels.sms) operations.push({ name: 'SMS', run: () => api.post('/registry/phone', { phoneNumber: subPhone.trim(), region: subRegion || null }) });
+    if (subChannels.push) operations.push({ name: 'Browser push', run: () => subscribePush(subRegion || null) });
+    const notes = [];
+    for (const operation of operations) {
+      try { await operation.run(); notes.push(operation.name + ' registration saved.'); }
+      catch (error) { notes.push(operation.name + ': ' + (error.response?.data?.error || error.message)); }
     }
-    setSubLoading(true);
-    setSubNote('');
-
-    try {
-      // Connect to real backend phone registry endpoint
-      await api.post('/registry/phone', {
-        phone: subPhone.trim(),
-        region: subRegion || 'All Regions'
-      }).catch(err => {
-        console.warn('Backend registry notice:', err.message);
-      });
-
-      setSubNote(`✓ Subscribed successfully! Real-time alerts for ${subRegion || 'all zones'} will be broadcast to ${subPhone}.`);
-      showToast(`Subscribed to ${subRegion || 'emergency'} alerts`, '✅');
-      setSubPhone('');
-      setSubEmail('');
-    } catch (err) {
-      setSubNote('✓ Subscription registered for SMS and alert dispatch.');
-      showToast('Subscribed to alerts', '✅');
-    } finally {
-      setSubLoading(false);
-    }
+    setSubNote(notes.join(' ')); setSubLoading(false);
   };
 
   // Filtered lists for sidebar
@@ -596,6 +481,7 @@ export default function LandingPage({
 
   return (
     <div className="landing-page-root">
+      {(feedLoading || feedError) && <div role="status" style={{ padding: 12, background: '#fff3cd' }}>{feedLoading ? 'Loading current alerts and shelters…' : feedError} {feedError && <button type="button" onClick={loadLiveData}>Retry live feed</button>}</div>}
       {/* NAVBAR */}
       <header className="nav" id="siteNav">
         <div className="nav-inner">
@@ -623,43 +509,7 @@ export default function LandingPage({
           </nav>
 
           <div className="nav-right">
-            {/* Language Switcher */}
-            <div className="lang-switch" style={{ position: 'relative' }}>
-              <button
-                type="button"
-                className="icon-btn lang-btn"
-                id="langBtn"
-                aria-haspopup="listbox"
-                aria-expanded={langMenuOpen}
-                onClick={() => setLangMenuOpen(!langMenuOpen)}
-                title="Select Language"
-              >
-                🌐
-              </button>
-              {langMenuOpen && (
-                <ul className="lang-menu open" id="langMenu" role="listbox">
-                  {[
-                    { code: 'en', name: 'English' },
-                    { code: 'hi', name: 'हिंदी' },
-                    { code: 'bn', name: 'বাংলা' },
-                    { code: 'ta', name: 'தமிழ்' }
-                  ].map(l => (
-                    <li
-                      key={l.code}
-                      role="option"
-                      className={currentLang === l.name ? 'active' : ''}
-                      onClick={() => {
-                        setCurrentLang(l.name);
-                        setLangMenuOpen(false);
-                        showToast(`Language switched to ${l.name}`, '🌐');
-                      }}
-                    >
-                      {l.name}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <button type="button" className="btn btn-ghost" onClick={onNavigateToPublicAlerts}>Alert settings</button>
 
             {/* Notification Bell */}
             <button
@@ -668,7 +518,7 @@ export default function LandingPage({
               id="notifBellBtn"
               aria-label="Notifications"
               title="Emergency Alerts"
-              onClick={() => showToast('2 Critical alerts active in Assam & Bay of Bengal', '🚨')}
+              onClick={() => { document.getElementById('livemap')?.scrollIntoView({ behavior: 'smooth' }); showToast(DISASTERS.filter(d => d.severity === 'high').length + ' critical alerts in the current feed', '🚨'); }}
             >
               🔔<span className="dot"></span>
             </button>
@@ -682,7 +532,7 @@ export default function LandingPage({
                 className="btn btn-ghost font-semibold"
                 title="Sign in to your account"
               >
-                Sign In
+                {user ? 'Open Console' : 'Sign In'}
               </button>
               <button
                 type="button"
@@ -691,7 +541,7 @@ export default function LandingPage({
                 className="btn btn-primary font-bold shadow-xs"
                 title="Create a new citizen or responder account"
               >
-                Sign Up
+                {user ? 'My Dashboard' : 'Sign Up'}
               </button>
             </div>
 
@@ -719,7 +569,7 @@ export default function LandingPage({
           <a href="#resources" onClick={() => setMobileMenuOpen(false)}>Resources</a>
           <a href="#about" onClick={() => setMobileMenuOpen(false)}>About</a>
           <a href="#faq" onClick={() => setMobileMenuOpen(false)}>FAQ</a>
-          
+
           <div className="mm-auth flex flex-col gap-2 pt-2">
             <button
               type="button"
@@ -754,7 +604,7 @@ export default function LandingPage({
             <p>
               Get real-time alerts, track active disasters, explore live hazard zones, and access nearby emergency resources across India — all in one unified, responsive platform.
             </p>
-            
+
             <div className="hero-ctas flex flex-wrap items-center gap-3">
               <a href="#livemap" className="btn btn-primary">Explore Live Map →</a>
               <a href="#alerts" className="btn btn-outline" id="watchDemoBtn">🔔 Subscribe to Alerts</a>
@@ -789,7 +639,7 @@ export default function LandingPage({
             <div className="map-legend">
               <div className="lg-row"><span className="lg-dot" style={{ background: 'var(--red)' }}></span>Critical Alert</div>
               <div className="lg-row"><span className="lg-dot" style={{ background: 'var(--orange)' }}></span>Warning Zone</div>
-              <div className="lg-row"><span className="lg-dot" style={{ background: 'var(--green)' }}></span>Safe Sector</div>
+
               <div className="lg-row"><span className="lg-dot" style={{ background: 'var(--blue)' }}></span>Relief Depot</div>
             </div>
           </div>
@@ -803,7 +653,7 @@ export default function LandingPage({
             <div>
               <div className="eyebrow">Key Capabilities</div>
               <h2 className="h2" style={{ marginBottom: '6px', maxWidth: '540px' }}>Unified disaster mitigation and emergency coordination</h2>
-              <p className="lede">From predictive early warnings to on-ground rescue routing, our system equips authorities, responders, and citizens with actionable intelligence.</p>
+              <p className="lede">Coordinate published alerts, community incident reports, rescue progress and shelter inventory.</p>
             </div>
             <a href="#livemap" className="btn btn-primary">View Hazard Dashboard →</a>
           </div>
@@ -823,19 +673,19 @@ export default function LandingPage({
             <div className="feat-card reveal in">
               <div className="feat-icon" style={{ background: 'var(--green-tint)', color: 'var(--green)' }}>📍</div>
               <h3>Resource Allocation</h3>
-              <p>Locate verified emergency shelters, field hospitals, blood banks, and food distribution centers.</p>
+              <p>Locate registered shelters and inspect reported relief supply availability.</p>
               <a href="#resources" className="feat-arrow">Find resources →</a>
             </div>
             <div className="feat-card reveal in">
               <div className="feat-icon" style={{ background: 'var(--purple-tint)', color: 'var(--purple)' }}>🌧️</div>
               <h3>Predictive Early Warning</h3>
-              <p>Continuous telemetry from meteorology sensors to project flash floods and storm paths.</p>
+              <p>Operators can assess weather readings using threshold rules. Demo simulations are not live predictions.</p>
               <a href="#livemap" className="feat-arrow">View analytics →</a>
             </div>
             <div className="feat-card reveal in">
               <div className="feat-icon" style={{ background: 'var(--orange-tint)', color: 'var(--orange)' }}>👥</div>
-              <h3>Agency Interoperability</h3>
-              <p>Direct communication bridge between NDRF, state SDRF teams, and community volunteers.</p>
+              <h3>Responder Coordination</h3>
+              <p>Role-based consoles connect administrators, approved volunteers and citizens.</p>
               <button type="button" onClick={onNavigateToLogin} className="feat-arrow" style={{ background: 'none', border: 'none', padding: 0 }}>Field response login →</button>
             </div>
             <div className="feat-card reveal in">
@@ -856,7 +706,7 @@ export default function LandingPage({
             <h2 className="h2">Interactive Disaster &amp; Hazard Radar</h2>
             <p className="lede">Track active emergencies, hazard radiuses, and live relief facilities across India with instant satellite and terrain switching.</p>
           </div>
-          
+
           <div className="lm-layout">
             {/* FILTER PANEL */}
             <div className="lm-panel" id="filterPanel">
@@ -867,7 +717,7 @@ export default function LandingPage({
                 onClick={() => setActiveFilter('all')}
               >
                 <span className="cn">🧭 All Categories</span>
-                <span className="cat-count" id="count-all">8</span>
+                <span className="cat-count" id="count-all">{DISASTERS.length + RESOURCES.length}</span>
               </button>
               <button
                 type="button"
@@ -875,7 +725,7 @@ export default function LandingPage({
                 onClick={() => setActiveFilter('flood')}
               >
                 <span className="cn">🌊 Floods</span>
-                <span className="cat-count" id="count-flood">2</span>
+                <span className="cat-count" id="count-flood">{DISASTERS.filter(d => d.type === 'flood').length}</span>
               </button>
               <button
                 type="button"
@@ -883,7 +733,7 @@ export default function LandingPage({
                 onClick={() => setActiveFilter('landslide')}
               >
                 <span className="cn">⛰️ Landslides</span>
-                <span className="cat-count" id="count-landslide">1</span>
+                <span className="cat-count" id="count-landslide">{DISASTERS.filter(d => d.type === 'landslide').length}</span>
               </button>
               <button
                 type="button"
@@ -891,7 +741,7 @@ export default function LandingPage({
                 onClick={() => setActiveFilter('cyclone')}
               >
                 <span className="cn">🌀 Cyclones</span>
-                <span className="cat-count" id="count-cyclone">1</span>
+                <span className="cat-count" id="count-cyclone">{DISASTERS.filter(d => d.type === 'cyclone').length}</span>
               </button>
               <button
                 type="button"
@@ -899,7 +749,7 @@ export default function LandingPage({
                 onClick={() => setActiveFilter('earthquake')}
               >
                 <span className="cn">📈 Earthquakes</span>
-                <span className="cat-count" id="count-earthquake">1</span>
+                <span className="cat-count" id="count-earthquake">{DISASTERS.filter(d => d.type === 'earthquake').length}</span>
               </button>
               <button
                 type="button"
@@ -907,7 +757,7 @@ export default function LandingPage({
                 onClick={() => setActiveFilter('wildfire')}
               >
                 <span className="cn">🔥 Wildfires</span>
-                <span className="cat-count" id="count-wildfire">1</span>
+                <span className="cat-count" id="count-wildfire">{DISASTERS.filter(d => d.type === 'wildfire').length}</span>
               </button>
               <button
                 type="button"
@@ -915,9 +765,9 @@ export default function LandingPage({
                 onClick={() => setActiveFilter('resource')}
               >
                 <span className="cn">🏥 Relief Hubs</span>
-                <span className="cat-count" id="count-resource">3</span>
+                <span className="cat-count" id="count-resource">{RESOURCES.length}</span>
               </button>
-              
+
               <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid var(--line)' }}>
                 <button
                   type="button"
@@ -998,7 +848,7 @@ export default function LandingPage({
                 <div className="map-status-pill">
                   <span className="live-indicator"></span>
                   <span id="mapStatusText">
-                    {activeMarkerCount} Active Markers • Live Feed Active
+                    {activeMarkerCount} Current Markers • {feedError ? 'Feed unavailable' : socket?.connected ? 'Connected' : 'Updates every 30s'}
                   </span>
                 </div>
               </div>
@@ -1057,7 +907,7 @@ export default function LandingPage({
             <div className="eyebrow">Direct Citizen Alerts</div>
             <h2 className="h2" style={{ maxWidth: '480px' }}>Receive early warnings straight to your phone</h2>
             <p className="lede">Select your district to receive critical weather advisories, flood warnings, and evacuation routes via SMS and push notifications.</p>
-            <div className="sub-offline">📶 <strong>Low Connectivity Protocol:</strong> SMS alert dispatch operates continuously even during 4G/5G data outages.</div>
+            <div className="sub-offline">📶 <strong>Low Connectivity Protocol:</strong> SMS requires cellular service and a configured delivery provider.</div>
           </div>
           <form className="sub-form" id="subscribeForm" onSubmit={handleSubscribeSubmit}>
             <label className="sub-field">
@@ -1086,17 +936,7 @@ export default function LandingPage({
                 placeholder="+91 98765 43210"
                 value={subPhone}
                 onChange={(e) => setSubPhone(e.target.value)}
-                required
-              />
-            </label>
-            <label className="sub-field">
-              <span>Email Address (for detailed bulletin)</span>
-              <input
-                type="email"
-                id="subEmail"
-                placeholder="responder@example.com"
-                value={subEmail}
-                onChange={(e) => setSubEmail(e.target.value)}
+                required={subChannels.sms}
               />
             </label>
             <div className="sub-channels">
@@ -1114,13 +954,7 @@ export default function LandingPage({
                   onChange={(e) => setSubChannels({ ...subChannels, push: e.target.checked })}
                 /> Mobile Push
               </label>
-              <label className="sub-check">
-                <input
-                  type="checkbox"
-                  checked={subChannels.email}
-                  onChange={(e) => setSubChannels({ ...subChannels, email: e.target.checked })}
-                /> Email Bulletins
-              </label>
+
             </div>
             <button
               type="submit"
@@ -1130,7 +964,7 @@ export default function LandingPage({
             >
               {subLoading ? 'Subscribing...' : 'Subscribe to Emergency Feeds →'}
             </button>
-            {subNote && <p className="sub-note" id="subNote" style={{ color: '#17924E', fontWeight: 600 }}>{subNote}</p>}
+            {subNote && <p className="sub-note" id="subNote" role="status" style={{ color: '#0B1F3D', fontWeight: 600 }}>{subNote}</p>}
           </form>
         </div>
       </section>
@@ -1168,70 +1002,19 @@ export default function LandingPage({
       {/* RESOURCES */}
       <section className="section-pad resources" id="resources">
         <div className="wrap">
-          <div className="eyebrow">Verified Field Facilities</div>
-          <h2 className="h2" style={{ maxWidth: '560px' }}>Emergency Shelters, Relief Bases &amp; Trauma Units</h2>
-          <p className="lede" style={{ marginBottom: '30px' }}>Real-time bed availability, medical supply inventory, and rapid routing instructions.</p>
+          <div className="eyebrow">Reported Shelter Facilities</div>
+          <h2 className="h2" style={{ maxWidth: '560px' }}>Emergency Shelters &amp; Relief Supplies</h2>
+          <p className="lede" style={{ marginBottom: '30px' }}>Reported bed availability, supply inventory, and directions to registered shelters.</p>
+          <button type="button" className="btn btn-ghost" onClick={handleLocateMe}>Sort shelters near my location</button>
           <div className="res-grid" id="resourceCardsGrid">
-            <div className="res-card">
-              <div>
-                <div className="rtitle">🏠 Community Relief Center</div>
-                <div className="rloc">Dehradun, Uttarakhand · 1.8 km away</div>
-                <div className="res-meta"><span>Capacity: 72%</span><span className="res-status status-open">● Open</span></div>
+            {RESOURCES.length === 0 && <p>{feedLoading ? 'Loading shelters…' : feedError ? 'Shelter data is unavailable.' : 'No active shelters reported.'}</p>}
+            {[...RESOURCES].sort((a, b) => locatedCoords ? calculateDistanceKm(locatedCoords.lat, locatedCoords.lng, a.lat, a.lng) - calculateDistanceKm(locatedCoords.lat, locatedCoords.lng, b.lat, b.lng) : 0).map(resource => <div className="res-card" key={resource.id}>
+              <div><div className="rtitle">🏠 {resource.name}</div><div className="rloc">{resource.address}{locatedCoords && ' · ' + calculateDistanceKm(locatedCoords.lat, locatedCoords.lng, resource.lat, resource.lng).toFixed(1) + ' km away'}</div>
+                <div className="res-meta"><span>{Math.max(0, resource.capacity - resource.currentOccupancy)} / {resource.capacity} beds available</span><span className="res-status" style={{ color: resource.status === 'RED' ? '#B23A2E' : resource.status === 'YELLOW' ? '#C97A2B' : '#17924E' }}>{resource.status}</span></div>
+                <p>{resource.services}</p>
               </div>
-              <a
-                href="https://www.google.com/maps/dir/?api=1&destination=30.3255,78.0410"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost direct-btn"
-              >
-                Get Directions →
-              </a>
-            </div>
-            <div className="res-card">
-              <div>
-                <div className="rtitle">🏥 Doon District Trauma Center</div>
-                <div className="rloc">Dehradun, Uttarakhand · 3.2 km away</div>
-                <div className="res-meta"><span>Capacity: 54%</span><span className="res-status status-open">● Open</span></div>
-              </div>
-              <a
-                href="https://www.google.com/maps/dir/?api=1&destination=30.3165,78.0322"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost direct-btn"
-              >
-                Get Directions →
-              </a>
-            </div>
-            <div className="res-card">
-              <div>
-                <div className="rtitle">💧 Emergency Water &amp; Ration Depot</div>
-                <div className="rloc">Guwahati, Assam · 0.6 km away</div>
-                <div className="res-meta"><span>Capacity: 88%</span><span className="res-status status-open">● Open</span></div>
-              </div>
-              <a
-                href="https://www.google.com/maps/dir/?api=1&destination=26.1500,91.7500"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost direct-btn"
-              >
-                Get Directions →
-              </a>
-            </div>
-            <div className="res-card">
-              <div>
-                <div className="rtitle">🚑 SDRF Emergency Staging Post</div>
-                <div className="rloc">Shimla, Himachal Pradesh · 2.4 km away</div>
-                <div className="res-meta"><span>Capacity: 40%</span><span className="res-status status-open">● Open</span></div>
-              </div>
-              <a
-                href="https://www.google.com/maps/dir/?api=1&destination=31.1000,77.1600"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost direct-btn"
-              >
-                Get Directions →
-              </a>
-            </div>
+              <a href={'https://www.google.com/maps/dir/?api=1&destination=' + resource.lat + ',' + resource.lng} target="_blank" rel="noopener noreferrer" className="btn btn-ghost direct-btn">Get Directions →</a>
+            </div>)}
           </div>
         </div>
       </section>
@@ -1240,15 +1023,15 @@ export default function LandingPage({
       <section className="section-pad impact" id="about">
         <div className="wrap impact-inner">
           <div>
-            <div className="eyebrow" style={{ color: '#9DC1FF' }}>Proven Community Resilience</div>
+            <div className="eyebrow" style={{ color: '#9DC1FF' }}>Current Response Data</div>
             <h2 className="h2">Stronger communities.<br />Faster emergency recovery.</h2>
-            <p>Through robust satellite feeds, verified field coordinators, and open-access public alerts, we help communities prepare and overcome severe climate emergencies.</p>
+            <p>View published alerts and shelter reports from this deployment. Availability depends on the latest reports from its operators.</p>
           </div>
           <div className="stat-grid">
-            <div className="stat-card reveal in"><div className="stat-icon">👥</div><div className="stat-num">2.5M+</div><div className="stat-label">Citizens Alerted</div></div>
-            <div className="stat-card reveal in"><div className="stat-icon">⚠️</div><div className="stat-num">1.2K+</div><div className="stat-label">Threats Tracked</div></div>
-            <div className="stat-card reveal in"><div className="stat-icon">🏠</div><div className="stat-num">850+</div><div className="stat-label">Relief Centers</div></div>
-            <div className="stat-card reveal in"><div className="stat-icon">🛡️</div><div className="stat-num">98.4%</div><div className="stat-label">Verified Accuracy</div></div>
+            <div className="stat-card reveal in"><div className="stat-icon">👥</div><div className="stat-num">{DISASTERS.length}</div><div className="stat-label">Active Alerts</div></div>
+            <div className="stat-card reveal in"><div className="stat-icon">⚠️</div><div className="stat-num">{DISASTERS.filter(a => a.severity === 'high').length}</div><div className="stat-label">Critical Alerts</div></div>
+            <div className="stat-card reveal in"><div className="stat-icon">🏠</div><div className="stat-num">{RESOURCES.length}</div><div className="stat-label">Active Shelters</div></div>
+            <div className="stat-card reveal in"><div className="stat-icon">🛡️</div><div className="stat-num">{RESOURCES.reduce((sum, r) => sum + Math.max(0, r.capacity - r.currentOccupancy), 0)}</div><div className="stat-label">Reported Free Beds</div></div>
           </div>
         </div>
       </section>
@@ -1256,46 +1039,24 @@ export default function LandingPage({
       {/* ABOUT / TEAM */}
       <section className="section-pad about-team">
         <div className="wrap">
-          <div className="eyebrow">Institutional Backing</div>
-          <h2 className="h2" style={{ maxWidth: '560px' }}>Built in synergy with state and national agencies</h2>
-          <p className="lede" style={{ marginBottom: '34px' }}>DisasterShield aggregates data directly from IMD radars, NDMA advisories, and certified local field responders for dependable crisis handling.</p>
+          <div className="eyebrow">Response Coordination</div>
+          <h2 className="h2" style={{ maxWidth: '560px' }}>Tools for citizens, volunteers and control rooms</h2>
+          <p className="lede" style={{ marginBottom: '34px' }}>This prototype combines operator-published alerts, community reports and shelter inventory. Official agency and satellite feeds are not integrated.</p>
           <div className="team-grid">
             <div className="team-card reveal in">
               <div className="team-avatar">DS</div>
               <h4>Disaster Mitigation Wing</h4>
-              <p>Coordinates directly with district collectors and emergency operations centers.</p>
+              <p>Control-room users review distress calls and publish response alerts.</p>
             </div>
             <div className="team-card reveal in">
               <div className="team-avatar">GD</div>
               <h4>GIS &amp; Remote Sensing</h4>
-              <p>Calculates dynamic flood inundation models, slope risks, and evacuation paths.</p>
+              <p>Displays reported hazard areas and shelter locations on selectable map layers.</p>
             </div>
             <div className="team-card reveal in">
               <div className="team-avatar">CO</div>
               <h4>First Responder Network</h4>
-              <p>Mobilizes verified community volunteers for shelter food supplies and medical relief.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* TESTIMONIALS */}
-      <section className="section-pad testimonials">
-        <div className="wrap">
-          <div className="eyebrow">Field Testimonials</div>
-          <h2 className="h2" style={{ maxWidth: '520px' }}>Trusted when seconds make the difference</h2>
-          <div className="test-grid">
-            <div className="test-card reveal in">
-              <p>"The flash flood warning was delivered 50 minutes before the river overflowed into our village. We evacuated all families and livestock in time."</p>
-              <div className="test-who"><span className="test-avatar">R</span><div><strong>Resident</strong><span>Guwahati, Assam</span></div></div>
-            </div>
-            <div className="test-card reveal in">
-              <p>"The live resource map showed us exactly which relief hubs had empty capacity, avoiding logjams and speeding up medical aid."</p>
-              <div className="test-who"><span className="test-avatar">V</span><div><strong>Relief Volunteer</strong><span>Shimla, Himachal Pradesh</span></div></div>
-            </div>
-            <div className="test-card reveal in">
-              <p>"The satellite layer and hazard radius circles make briefing field search and rescue squads straightforward and fast."</p>
-              <div className="test-who"><span className="test-avatar">D</span><div><strong>District Operations Coordinator</strong><span>Dehradun, Uttarakhand</span></div></div>
+              <p>Approved volunteers update rescue progress and shelter supplies.</p>
             </div>
           </div>
         </div>
@@ -1310,13 +1071,13 @@ export default function LandingPage({
             <div className="hw-step reveal in">
               <div className="hw-num">1</div>
               <h4>Receive Alert</h4>
-              <p>Instant SMS &amp; map broadcast upon threat detection.</p>
+              <p>Receive published map alerts; SMS and push require configured delivery.</p>
               <span className="hw-arrow">→</span>
             </div>
             <div className="hw-step reveal in">
               <div className="hw-num">2</div>
               <h4>Inspect Map</h4>
-              <p>View active hazard radiuses and safe zones in real time.</p>
+              <p>View published hazard areas and reported shelters.</p>
               <span className="hw-arrow">→</span>
             </div>
             <div className="hw-step reveal in">
@@ -1342,19 +1103,19 @@ export default function LandingPage({
           <div className="faq-list">
             <details className="faq-item" open>
               <summary>How frequently are map hazard markers updated?<span className="faq-chev">＋</span></summary>
-              <p>Hazard telemetry and active alert markers update every 60 seconds from satellite telemetry, meteorological alerts, and verified district command reports.</p>
+              <p>The page refreshes published alerts and shelter reports every 30 seconds and when connected live events arrive. An unavailable-data message appears if the API cannot be reached.</p>
             </details>
             <details className="faq-item">
               <summary>Does the alert system function during cellular internet failure?<span className="faq-chev">＋</span></summary>
-              <p>Yes. Our critical alert engine automatically falls back to cellular SMS broadcasts, which operate across standard 2G/GSM voice channels even during mobile data cutoffs.</p>
+              <p>Registered phones can receive SMS when an operator publishes an alert and an SMS provider is configured. SMS requires cellular service. Reports saved offline on this device synchronize after internet access returns; they have not been dispatched until then.</p>
             </details>
             <details className="faq-item">
               <summary>Are resource center details confirmed by field teams?<span className="faq-chev">＋</span></summary>
-              <p>Yes. Every shelter, relief depot, and trauma facility is validated with local authorities and designated emergency coordinators.</p>
+              <p>Shelter reports are entered by administrators and approved volunteers. Check the latest report and contact the shelter before travelling.</p>
             </details>
             <details className="faq-item">
               <summary>How do I register an NGO or local hospital on the map?<span className="faq-chev">＋</span></summary>
-              <p>Click "Report Field Incident" or contact our GIS emergency desk below to get verified and listed on the national resource grid.</p>
+              <p>Ask the administrator of this deployment to add the facility. Field incident reporting creates a hazard report, not a shelter.</p>
             </details>
           </div>
         </div>
@@ -1366,7 +1127,7 @@ export default function LandingPage({
           <div className="mission-card">
             <div>
               <h2>Disasters cannot be prevented, but loss of life can.</h2>
-              <p>Join thousands of community responders, NGOs, and district officials building resilient infrastructure.</p>
+              <p>Register to report hazards, request help or apply to join the responder network.</p>
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
@@ -1407,7 +1168,7 @@ export default function LandingPage({
                 <span className="brand-name">DisasterShield</span>
               </div>
               <p>Real-Time Disaster Mitigation, Early Warning &amp; Citizen Relief Network.</p>
-              <p className="foot-sources">Data sources: IMD, NDMA, State Disaster Management Authorities &amp; Verified Telemetry.</p>
+              <p className="foot-sources">Data sources: reports published in this deployment; configured weather provider or labelled simulation.</p>
             </div>
             <div>
               <h5>NAVIGATION</h5>
@@ -1423,26 +1184,23 @@ export default function LandingPage({
             <div>
               <h5>24/7 HELPLINE</h5>
               <ul className="foot-links">
-                <li><a href="mailto:ops@disastershield.org">ops@disastershield.org</a></li>
+
                 <li><a href="tel:112">National Emergency: 112</a></li>
                 <li><a href="tel:1078">NDMA Helpline: 1078</a></li>
               </ul>
               <h5 style={{ marginTop: '20px' }}>CONNECT</h5>
               <div className="foot-social">
-                <a href="#" aria-label="X">𝕏</a>
-                <a href="#" aria-label="Facebook">f</a>
-                <a href="#" aria-label="Instagram">◎</a>
-                <a href="#" aria-label="LinkedIn">in</a>
               </div>
             </div>
           </div>
           <div className="foot-bottom">
             <span>© 2026 DisasterShield Platform. All rights reserved.</span>
-            <span className="foot-legal"><a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a></span>
+            <span className="foot-legal"><button type="button" onClick={() => setLegalView('Privacy')}>Privacy</button> · <button type="button" onClick={() => setLegalView('Usage')}>Usage information</button></span>
             <span>Live operational demonstration interface.</span>
           </div>
         </div>
       </footer>
+      {legalView && <div role="dialog" aria-modal="true" aria-label={legalView} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: '#0009', display: 'grid', placeItems: 'center', padding: 20 }}><div style={{ background: 'white', padding: 24, maxWidth: 550, borderRadius: 12 }}><h2>{legalView}</h2><p>{legalView === 'Privacy' ? 'This platform stores account details, emergency reports, shelter records, and your chosen alert subscriptions. SOS details are shared with approved responders and the reporting account. Browser permissions control location, camera and notifications. Offline actions remain in your browser until synchronized. Contact the deployment operator for account and subscription removal.' : 'This project is a disaster response prototype. Alerts and shelters reflect records entered into this deployment. SMS delivery requires a configured provider; browser notifications require permission. For immediate assistance contact the emergency services shown on this page.'}</p><button type="button" className="btn btn-primary" onClick={() => setLegalView(null)}>Close</button></div></div>}
 
       {/* TOAST CONTAINER */}
       <div id="toastContainer">

@@ -35,6 +35,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 1000; transform: translateY(-200%); background: #14231F; color: white; padding: 12px; border-radius: 8px; }
+.skip-link:focus { transform: translateY(0); }
+.dashboard-shell :is(button, a, summary, input, select, textarea):focus-visible { outline: 3px solid #2E6E4E; outline-offset: 3px; }
+.dashboard-shell button, .dashboard-shell summary { min-height: 44px; }
+.dashboard-shell nav[aria-label='Dashboard sections'] + * { scroll-margin-top: 8rem; }
+.dashboard-shell :is(input:not([type='checkbox']):not([type='radio']), select) { min-height: 44px; }
+.dashboard-shell :is(input[type='checkbox'], input[type='radio']) { width: 18px; height: 18px; flex-shrink: 0; accent-color: #2E6E4E; }
+html[data-comfort='true'] .dashboard-shell :is(p, label, button, summary, select, input, textarea) { font-size: max(1rem, 1em); line-height: 1.6; }
+html[data-comfort='true'] .dashboard-shell :is(.text-xs, .text-sm) { font-size: 1rem; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
   letter-spacing: -0.02em;

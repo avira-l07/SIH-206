@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Shield, AlertTriangle, User, LifeBuoy, ArrowRight, Loader2 } from 'lucide-react';
+import AccountRecovery from '../components/AccountRecovery';
+import { Shield, AlertTriangle, ArrowRight, Loader2 } from 'lucide-react';
 
 export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBackToLanding }) {
   const { login } = useAuth();
+  const [recovery,setRecovery]=useState(false),[code,setCode]=useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -27,9 +29,9 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
     }
     setLoading(true);
     try {
-      await login(cleanEmail, password);
+      await login(cleanEmail, password,code);
     } catch (err) {
-      console.error('Login error', err);
+      console.warn('Login request failed:', err.response?.status || 'network unavailable');
       setError(err.response?.data?.error || 'Authentication failed. Verify credentials.');
     } finally {
       setLoading(false);
@@ -44,6 +46,7 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
   return (
     <div className="min-h-[calc(100vh-60px)] flex items-center justify-center p-4 bg-[#F6F4EF]">
       <div className="max-w-md w-full bg-[#FFFFFF] border border-[#D8D3C7] rounded p-6 sm:p-8 shadow-xs">
+        {recovery?<AccountRecovery onBack={()=>setRecovery(false)}/>:<>
         {/* Back to Landing */}
         {onBackToLanding && (
           <button
@@ -63,17 +66,17 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
             <Shield className="w-5 h-5 text-[#F6F4EF]" />
           </div>
           <h1 className="font-display font-bold text-xl sm:text-2xl text-[#14231F] tracking-tight">
-            DISASTER OPS LOGIN
+            Sign in to DisasterShield
           </h1>
           <p className="text-xs font-mono text-[#14231F]/60 mt-1">
-            Access secure emergency coordination console
+            Open your citizen, volunteer or operator dashboard.
           </p>
         </div>
 
         {/* Demo Fast Fill Buttons for Hackathon Presentation */}
-        <div className="mb-6 p-3 bg-[#EFECE4] border border-[#D8D3C7] rounded space-y-2">
+        {(import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO === 'true') && <div className="mb-6 p-3 bg-[#EFECE4] border border-[#D8D3C7] rounded space-y-2">
           <div className="text-[10px] font-mono uppercase text-[#14231F]/70 font-semibold">
-            QUICK DEMO ACCOUNTS (1-CLICK FILL):
+            Try a demo account:
           </div>
           <div className="grid grid-cols-3 gap-1.5">
             <button
@@ -98,10 +101,12 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
               onClick={() => fillDemoCreds('admin@sih.gov.in')}
               className="px-2 py-1.5 text-[11px] font-mono bg-[#FFFFFF] hover:bg-[#D8D3C7] text-[#14231F] border border-[#D8D3C7] rounded font-semibold text-center"
             >
-              NDMA Admin
+              Operator
             </button>
           </div>
         </div>
+
+        }
 
         {error && (
           <div className="mb-4 p-3 bg-[#B23A2E]/10 border border-[#B23A2E]/30 text-[#B23A2E] text-xs rounded flex items-center gap-2">
@@ -141,6 +146,7 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
             />
           </div>
 
+          <label className="block text-sm">Authenticator or recovery code (if enabled)<input autoComplete="one-time-code" value={code} onChange={e=>setCode(e.target.value)} className="mt-1 w-full rounded border p-2.5"/></label>
           <button
             type="submit"
             id="login-submit-btn"
@@ -151,13 +157,14 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <>
-                <span>ENTER CONSOLE</span>
+                <span>Sign in</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
         </form>
 
+        <button type="button" className="mt-4 underline text-sm" onClick={()=>setRecovery(true)}>Forgot password?</button>
         {/* Public No-Login Alert Sign-up Link */}
         <div className="mt-5 p-3 bg-[#B23A2E]/5 border border-[#B23A2E]/20 rounded text-left">
           <div className="flex items-start gap-2">
@@ -176,7 +183,7 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
                   onClick={onSwitchToPublicAlerts}
                   className="mt-1.5 inline-flex items-center text-xs font-mono font-bold text-[#B23A2E] hover:underline"
                 >
-                  Go to Public Alert Registry (No-Login) →
+                  Get alerts without signing in →
                 </button>
               )}
             </div>
@@ -195,6 +202,7 @@ export default function Login({ onSwitchToRegister, onSwitchToPublicAlerts, onBa
             </button>
           </p>
         </div>
+      </>}
       </div>
     </div>
   );

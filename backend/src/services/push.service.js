@@ -10,6 +10,7 @@
  */
 
 const prisma = require('../db');
+const { isAllowedPushEndpoint } = require('../config/security');
 
 let webpush = null;
 let vapidPublicKey = process.env.VAPID_PUBLIC_KEY || null;
@@ -20,7 +21,9 @@ function initWebPush() {
   if (webpush) return webpush;
 
   try {
-    webpush = require('web-push');
+    const candidate = require('web-push');
+    if (process.env.NODE_ENV === 'production' && (!vapidPublicKey || !vapidPrivateKey)) return null;
+    webpush = candidate;
 
     // If VAPID keys aren't in .env, generate a deterministic or in-memory fallback pair
     if (!vapidPublicKey || !vapidPrivateKey) {
@@ -70,14 +73,14 @@ async function sendPushBroadcast(subscriptions = [], payload = {}) {
   const wp = initWebPush();
   const serializedPayload = JSON.stringify(payload);
 
-  if (!wp) {
+  if (!wp || process.env.DISABLE_EXTERNAL_DELIVERY === 'true') {
     console.log(`\n================= [WEB PUSH BROADCAST (SIMULATED)] =================`);
     console.log(`📡 Subscribers: ${subscriptions.length}`);
     console.log(`📦 Payload:`, payload);
     console.log(`====================================================================\n`);
     return {
       attempted: subscriptions.length,
-      delivered: subscriptions.length,
+      delivered: 0,
       pruned: 0,
       failed: 0,
       simulated: true,
@@ -91,6 +94,7 @@ async function sendPushBroadcast(subscriptions = [], payload = {}) {
   let failedCount = 0;
 
   const pushPromises = subscriptions.map(async (sub) => {
+    if (!isAllowedPushEndpoint(sub.endpoint)) { failedCount++; return; }
     const maskedEndpoint = maskEndpoint(sub.endpoint);
     let pushSubscription;
     try {
@@ -108,6 +112,7 @@ async function sendPushBroadcast(subscriptions = [], payload = {}) {
     try {
       await wp.sendNotification(pushSubscription, serializedPayload, {
         TTL: 3600, // Deliver within 1 hour even if device was briefly offline
+        timeout: 5000,
         urgency: payload.severity === 'CRITICAL' ? 'high' : 'normal',
       });
       deliveredCount++;

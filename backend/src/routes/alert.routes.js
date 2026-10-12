@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+router.param('id', require('../middleware/request.middleware').validateId);
 const alertController = require('../controllers/alert.controller');
 const { validateAlert } = require('../middleware/validate.middleware');
 const { authenticateToken, requireRole } = require('../middleware/auth.middleware');

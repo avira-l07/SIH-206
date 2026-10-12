@@ -6,13 +6,13 @@ import { useAuth } from './AuthContext';
 const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
-  const { user, token } = useAuth();
+  const { user, token, refreshUser } = useAuth();
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   useEffect(() => {
-    const currentToken = token || localStorage.getItem('sih_auth_token') || localStorage.getItem('token');
+    const currentToken = token || localStorage.getItem('sih_auth_token');
     const socketInstance = io(API_BASE_URL || undefined, {
       auth: { token: currentToken },
       reconnectionAttempts: Infinity,
@@ -26,6 +26,7 @@ export function SocketProvider({ children }) {
       console.log('⚡ Connected to disaster real-time network');
       setIsConnected(true);
       setIsReconnecting(false);
+      window.dispatchEvent(new CustomEvent('sih:relay-connected'));
 
       if (user?.role) {
         socketInstance.emit('join:role', user.role);
@@ -44,31 +45,37 @@ export function SocketProvider({ children }) {
       }
     });
 
-    socketInstance.on('disconnect', (reason) => {
+    let cancelled = false;
+    socketInstance.on('disconnect', async (reason) => {
       console.warn('⚠️ Disconnected from real-time network:', reason);
       setIsConnected(false);
+      if (reason === 'io server disconnect' && currentToken) {
+        try { await refreshUser(); if (!cancelled && localStorage.getItem('sih_auth_token') === currentToken) socketInstance.connect(); } catch { setIsReconnecting(false); }
+      }
     });
 
-    socketInstance.on('reconnect_attempt', () => {
+    socketInstance.io.on('reconnect_attempt', () => {
       setIsReconnecting(true);
     });
 
-    socketInstance.on('reconnect', () => {
+    socketInstance.io.on('reconnect', () => {
       console.log('✅ Reconnected to real-time network');
       setIsConnected(true);
       setIsReconnecting(false);
     });
 
-    socketInstance.on('reconnect_error', () => {
+    socketInstance.io.on('reconnect_error', () => {
       setIsReconnecting(true);
     });
 
+    socketInstance.on('connect_error', () => { setIsConnected(false); setIsReconnecting(true); });
     setSocket(socketInstance);
 
     return () => {
+      cancelled = true;
       socketInstance.disconnect();
     };
-  }, [token]);
+  }, [token, user?.role, user?.trusted, refreshUser]);
 
   // Sync role room whenever user or role changes
   useEffect(() => {

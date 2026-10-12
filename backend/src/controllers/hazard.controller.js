@@ -1,5 +1,7 @@
 const prisma = require('../db');
-const { calculateConfidenceTier } = require('../services/verification.service');
+const { transaction } = require('../services/transaction.service');
+const { validPhoto } = require('../middleware/request.middleware');
+const { calculateConfidenceTier, isWithinRadius } = require('../services/verification.service');
 const {
   broadcastHazardCreated,
   broadcastHazardConfirmed,
@@ -37,16 +39,16 @@ async function createHazardReport(req, res) {
     let sanitizedPhotoUrl = null;
     if (photoUrl) {
       const urlStr = String(photoUrl).trim();
-      if (urlStr.length > 500 || !/^https?:\/\//i.test(urlStr)) {
-        return res.status(400).json({ error: 'photoUrl must be a valid http/https URL (max 500 chars)' });
+      if (!validPhoto(urlStr)) {
+        return res.status(400).json({ error: 'Invalid evidence image' });
       }
       sanitizedPhotoUrl = urlStr;
     }
 
     const userId = req.user ? req.user.id : null;
-    const authorName = userName || (req.user ? req.user.name : 'Anonymous Citizen');
+    const authorName = String(userName || (req.user ? req.user.name : 'Anonymous Citizen')).slice(0, 100);
 
-    const report = await prisma.hazardReport.create({
+    const report = await (req.database || prisma).hazardReport.create({
       data: {
         userId,
         userName: authorName,
@@ -56,6 +58,7 @@ async function createHazardReport(req, res) {
         severityBenchmark: severityBenchmark.toUpperCase(),
         photoUrl: sanitizedPhotoUrl,
         confidenceTier: 'GREY',
+        region: require('../services/field.service').regionKey(req.body.region || req.user?.region),
         confirmationsCount: 0,
       },
       include: {
@@ -63,11 +66,11 @@ async function createHazardReport(req, res) {
       },
     });
 
-    broadcastHazardCreated(report);
+    if (!req.deferBroadcast) broadcastHazardCreated(report);
     res.status(201).json({ message: 'Hazard report registered under review', report });
   } catch (error) {
     console.error('Error creating hazard report:', error);
-    res.status(500).json({ error: 'Failed to submit hazard report' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to submit hazard report' });
   }
 }
 
@@ -86,7 +89,7 @@ async function getHazardReports(req, res) {
         user: { select: { id: true, name: true, role: true, trusted: true } },
         confirmations: {
           include: {
-            confirmingUser: { select: { id: true, name: true, trusted: true } },
+            confirmingUser: { select: { id: true, name: true, trusted: true, role: true } },
           },
         },
       },
@@ -95,7 +98,7 @@ async function getHazardReports(req, res) {
     res.status(200).json({ reports });
   } catch (error) {
     console.error('Error fetching hazard reports:', error);
-    res.status(500).json({ error: 'Failed to fetch hazard reports' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch hazard reports' });
   }
 }
 
@@ -104,128 +107,31 @@ async function getHazardReports(req, res) {
  */
 async function confirmHazardReport(req, res) {
   try {
-    const reportId = parseInt(req.params.id);
-    if (isNaN(reportId)) {
-      return res.status(400).json({ error: 'Invalid hazard report ID' });
-    }
-
-    const userId = req.user.id;
-
-    const report = await prisma.hazardReport.findUnique({
-      where: { id: reportId },
-      include: {
-        confirmations: {
-          include: { confirmingUser: true },
-        },
-      },
-    });
-
-    if (!report) {
-      return res.status(404).json({ error: 'Hazard report not found' });
-    }
-
-    // Check if user is the author
-    if (report.userId === userId) {
-      return res.status(400).json({ error: 'You cannot confirm your own hazard report' });
-    }
-
+    const reportId = Number(req.params.id), userId = req.user.id;
     const voteType = req.body.voteType ? req.body.voteType.toUpperCase() : 'CONFIRM';
-    const validVoteTypes = ['CONFIRM', 'FALSE', 'RESOLVED'];
-    if (!validVoteTypes.includes(voteType)) {
-      return res.status(400).json({ error: `Invalid voteType. Allowed: ${validVoteTypes.join(', ')}` });
-    }
-
-    // Check existing vote for upsert or duplicate check
-    const existingVote = await prisma.hazardConfirmation.findUnique({
-      where: {
-        hazardReportId_confirmingUserId: {
-          hazardReportId: reportId,
-          confirmingUserId: userId,
-        },
-      },
+    if (!['CONFIRM', 'FALSE', 'RESOLVED'].includes(voteType)) return res.status(400).json({ error: 'Invalid voteType' });
+    const { updatedReport, tierChanged } = await transaction(async tx => {
+      const report = await tx.hazardReport.findUnique({ where: { id: reportId } });
+      if (!report) throw Object.assign(new Error('Hazard report not found'), { status: 404 });
+      if (report.userId === userId) throw Object.assign(new Error('You cannot confirm your own hazard report'), { status: 400 });
+      const responder = req.user.role === 'ADMIN' || (req.user.role === 'VOLUNTEER' && req.user.trusted);
+      if (!responder && (req.user.lat == null || req.user.lng == null || !isWithinRadius(req.user.lat, req.user.lng, report.lat, report.lng, 300))) throw Object.assign(new Error('Citizen verification requires a saved location within 300 metres; update your location first'), { status: 403 });
+      const where = { hazardReportId_confirmingUserId: { hazardReportId: reportId, confirmingUserId: userId } };
+      const existing = await tx.hazardConfirmation.findUnique({ where });
+      if (existing?.voteType === voteType && Date.now() - existing.updatedAt.getTime() < 2000) throw Object.assign(new Error('Identical vote already registered recently'), { status: 409 });
+      await tx.hazardConfirmation.upsert({ where, create: { hazardReportId: reportId, confirmingUserId: userId, voteType }, update: { voteType, updatedAt: new Date() } });
+      const confirmations = await tx.hazardConfirmation.findMany({ where: { hazardReportId: reportId }, include: { confirmingUser: { select: { id: true, name: true, trusted: true, role: true } } } });
+      const count = type => confirmations.filter(c => c.voteType === type).length;
+      const trusted = type => confirmations.some(c => c.voteType === type && c.confirmingUser.trusted && ['ADMIN', 'VOLUNTEER'].includes(c.confirmingUser.role));
+      const newTier = calculateConfidenceTier({ confirmVotes: count('CONFIRM'), falseVotes: count('FALSE'), resolvedVotes: count('RESOLVED'), hasTrustedConfirm: trusted('CONFIRM'), hasTrustedFalse: trusted('FALSE'), hasTrustedResolved: trusted('RESOLVED') });
+      const updatedReport = await tx.hazardReport.update({ where: { id: reportId }, data: { confirmationsCount: count('CONFIRM'), confidenceTier: newTier }, include: { confirmations: { include: { confirmingUser: { select: { id: true, name: true, trusted: true, role: true } } } } } });
+      return { updatedReport, tierChanged: report.confidenceTier !== newTier };
     });
-
-    if (existingVote) {
-      // Check for rapid identical repeat vote (< 2 seconds)
-      const timeDiffMs = Date.now() - new Date(existingVote.updatedAt).getTime();
-      if (existingVote.voteType === voteType && timeDiffMs < 2000) {
-        return res.status(409).json({ error: 'Identical vote already registered recently' });
-      }
-
-      // Upsert: update voteType
-      await prisma.hazardConfirmation.update({
-        where: {
-          hazardReportId_confirmingUserId: {
-            hazardReportId: reportId,
-            confirmingUserId: userId,
-          },
-        },
-        data: {
-          voteType,
-          updatedAt: new Date(),
-        },
-      });
-    } else {
-      await prisma.hazardConfirmation.create({
-        data: {
-          hazardReportId: reportId,
-          confirmingUserId: userId,
-          voteType,
-        },
-      });
-    }
-
-    // Fetch updated confirmations
-    const allConfirmations = await prisma.hazardConfirmation.findMany({
-      where: { hazardReportId: reportId },
-      include: { confirmingUser: { select: { id: true, name: true, trusted: true } } },
-    });
-
-    const confirmVotes = allConfirmations.filter((c) => c.voteType === 'CONFIRM').length;
-    const falseVotes = allConfirmations.filter((c) => c.voteType === 'FALSE').length;
-    const resolvedVotes = allConfirmations.filter((c) => c.voteType === 'RESOLVED').length;
-
-    const hasTrustedConfirm = allConfirmations.some((c) => c.voteType === 'CONFIRM' && c.confirmingUser?.trusted);
-    const hasTrustedFalse = allConfirmations.some((c) => c.voteType === 'FALSE' && c.confirmingUser?.trusted);
-    const hasTrustedResolved = allConfirmations.some((c) => c.voteType === 'RESOLVED' && c.confirmingUser?.trusted);
-
-    const newTier = calculateConfidenceTier({
-      confirmVotes,
-      falseVotes,
-      resolvedVotes,
-      hasTrustedConfirm,
-      hasTrustedFalse,
-      hasTrustedResolved,
-    });
-
-    const tierChanged = newTier !== report.confidenceTier;
-
-    const updatedReport = await prisma.hazardReport.update({
-      where: { id: reportId },
-      data: {
-        confirmationsCount: confirmVotes,
-        confidenceTier: newTier,
-      },
-      include: {
-        confirmations: {
-          include: { confirmingUser: { select: { id: true, name: true, trusted: true } } },
-        },
-      },
-    });
-
     broadcastHazardConfirmed(updatedReport);
-    if (tierChanged) {
-      broadcastHazardTierChanged(updatedReport);
-    }
-
-    res.status(200).json({
-      message: `Vote (${voteType}) registered successfully! Current tier: ${newTier}`,
-      report: updatedReport,
-      tierChanged,
-    });
+    if (tierChanged) broadcastHazardTierChanged(updatedReport);
+    res.json({ message: 'Vote registered. Current tier: ' + updatedReport.confidenceTier, report: updatedReport, tierChanged });
   } catch (error) {
-    console.error('Error confirming hazard report:', error);
-    res.status(500).json({ error: 'Failed to confirm hazard report' });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to confirm hazard report' });
   }
 }
 

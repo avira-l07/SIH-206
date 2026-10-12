@@ -1,4 +1,6 @@
 const prisma = require('../db');
+const { recordNotice } = require('../services/activity.service');
+const { transaction } = require('../services/transaction.service');
 const {
   broadcastShelterOccupancy,
   broadcastShelterAudit,
@@ -90,7 +92,7 @@ async function getAllShelters(req, res) {
     res.status(200).json({ shelters });
   } catch (error) {
     console.error('Error fetching shelters:', error);
-    res.status(500).json({ error: 'Failed to fetch shelters' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch shelters' });
   }
 }
 
@@ -114,7 +116,7 @@ async function createShelter(req, res) {
       rationsThreshold = 50,
     } = req.body;
 
-    if (!name || typeof lat !== 'number' || typeof lng !== 'number' || !capacity) {
+    if (typeof name !== 'string' || !name.trim() || !Number.isFinite(lat) || !Number.isFinite(lng) || !capacity) {
       return res.status(400).json({ error: 'Missing required shelter fields: name, lat, lng, capacity' });
     }
 
@@ -122,12 +124,13 @@ async function createShelter(req, res) {
       return res.status(400).json({ error: 'Valid geographic coordinates (lat −90–90, lng −180–180) are required' });
     }
 
-    const parsedCapacity = parseInt(capacity);
-    if (isNaN(parsedCapacity) || parsedCapacity <= 0 || parsedCapacity > 100000) {
+    const parsedCapacity = Number(capacity);
+    if (!Number.isSafeInteger(parsedCapacity) || parsedCapacity <= 0 || parsedCapacity > 100000) {
       return res.status(400).json({ error: 'Capacity must be a positive integer between 1 and 100,000' });
     }
 
-    const parsedOccupancy = Math.max(0, parseInt(currentOccupancy) || 0);
+    const parsedOccupancy = Number(currentOccupancy);
+    if (!Number.isSafeInteger(parsedOccupancy) || parsedOccupancy < 0 || parsedOccupancy > parsedCapacity) return res.status(400).json({ error: 'Occupancy must be an integer within shelter capacity' });
     const parsedWaterLiters = typeof waterLitersRemaining === 'number' ? Math.max(0, waterLitersRemaining) : null;
     const parsedWaterThreshold = parseInt(waterThreshold) || 200;
     const parsedRationsUnits = typeof rationsUnitsRemaining === 'number' ? Math.max(0, rationsUnitsRemaining) : null;
@@ -146,6 +149,7 @@ async function createShelter(req, res) {
 
     const shelter = await prisma.shelter.create({
       data: {
+        region: require('../services/field.service').regionKey(req.body.region || req.user.serviceRegion),
         name: String(name).trim().slice(0, 150),
         address: String(address || '').slice(0, 250),
         lat,
@@ -166,10 +170,11 @@ async function createShelter(req, res) {
       },
     });
 
+    broadcastShelterAudit(shelter);
     res.status(201).json({ message: 'Shelter created', shelter });
   } catch (error) {
     console.error('Error creating shelter:', error);
-    res.status(500).json({ error: 'Failed to create shelter' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to create shelter' });
   }
 }
 
@@ -191,15 +196,19 @@ async function logShelterEventInternal({
   operatorName = 'Field Operator',
   idempotencyKey = null,
   capturedAt = null,
+  occupancyPct = null,
+  bedsFree = null,
+  syncLog = null,
 }) {
   const parsedShelterId = parseInt(shelterId);
   if (isNaN(parsedShelterId)) {
     throw new Error('Invalid shelter ID');
   }
 
+  const result = await transaction(async tx => {
   // Idempotency check: if already processed under this idempotencyKey, return duplicate safe response
   if (idempotencyKey) {
-    const existingEvent = await prisma.shelterEvent.findUnique({
+    const existingEvent = await tx.shelterEvent.findUnique({
       where: { idempotencyKey },
       include: { shelter: true },
     });
@@ -212,12 +221,13 @@ async function logShelterEventInternal({
     }
   }
 
-  const existingShelter = await prisma.shelter.findUnique({ where: { id: parsedShelterId } });
+  const existingShelter = await tx.shelter.findUnique({ where: { id: parsedShelterId } });
   if (!existingShelter) {
     throw new Error(`Shelter #${parsedShelterId} not found`);
   }
 
-  const dOcc = parseInt(deltaOccupancy) || 0;
+  const targetOccupancy = bedsFree != null ? Math.max(0, existingShelter.capacity - bedsFree) : occupancyPct != null ? Math.round(existingShelter.capacity * occupancyPct / 100) : null;
+  const dOcc = targetOccupancy != null ? targetOccupancy - existingShelter.currentOccupancy : parseInt(deltaOccupancy) || 0;
   const dWater = parseInt(deltaWaterLiters) || 0;
   const dRat = parseInt(deltaRations) || 0;
   const dMed = parseInt(deltaMedicalKits) || 0;
@@ -225,22 +235,15 @@ async function logShelterEventInternal({
 
   // Server-side bounds clamping against real-time database state (Fix 5)
   const newOccupancy = Math.max(0, Math.min(existingShelter.capacity, existingShelter.currentOccupancy + dOcc));
+  const namedOccupants=await tx.shelterIntake.count({where:{shelterId:parsedShelterId,status:'PRESENT'}});if(newOccupancy<namedOccupants)throw Object.assign(new Error('Record named departures before reducing occupancy below present arrivals'),{status:409});
   const newWaterLiters =
-    existingShelter.waterLitersRemaining !== null
-      ? Math.max(0, existingShelter.waterLitersRemaining + dWater)
-      : null;
+    existingShelter.waterLitersRemaining == null && dWater === 0 ? null : Math.max(0, (existingShelter.waterLitersRemaining ?? 0) + dWater);
   const newRations =
-    existingShelter.rationsUnitsRemaining !== null
-      ? Math.max(0, existingShelter.rationsUnitsRemaining + dRat)
-      : null;
+    existingShelter.rationsUnitsRemaining == null && dRat === 0 ? null : Math.max(0, (existingShelter.rationsUnitsRemaining ?? 0) + dRat);
   const newMedicalKits =
-    existingShelter.medicalKitsRemaining !== null
-      ? Math.max(0, existingShelter.medicalKitsRemaining + dMed)
-      : null;
+    existingShelter.medicalKitsRemaining == null && dMed === 0 ? null : Math.max(0, (existingShelter.medicalKitsRemaining ?? 0) + dMed);
   const newBlankets =
-    existingShelter.blanketsRemaining !== null
-      ? Math.max(0, existingShelter.blanketsRemaining + dBlk)
-      : null;
+    existingShelter.blanketsRemaining == null && dBlk === 0 ? null : Math.max(0, (existingShelter.blanketsRemaining ?? 0) + dBlk);
 
   const effectiveWaterOk = typeof waterOk === 'boolean' ? waterOk : existingShelter.waterOk;
   const effectiveRationsOk = typeof rationsOk === 'boolean' ? rationsOk : existingShelter.rationsOk;
@@ -288,8 +291,7 @@ async function logShelterEventInternal({
   if (typeof waterOk === 'boolean') shelterUpdateData.waterOk = waterOk;
   if (typeof rationsOk === 'boolean') shelterUpdateData.rationsOk = rationsOk;
 
-  const [event, updatedShelter] = await prisma.$transaction([
-    prisma.shelterEvent.create({
+  const event = await tx.shelterEvent.create({
       data: {
         shelterId: parsedShelterId,
         deltaOccupancy: dOcc,
@@ -299,16 +301,24 @@ async function logShelterEventInternal({
         deltaBlankets: dBlk,
         reason: String(reason || 'Field logistics adjustment').trim().slice(0, 500),
         operatorName: String(operatorName || 'Field Operator').trim().slice(0, 100),
-        idempotencyKey: idempotencyKey ? String(idempotencyKey).slice(0, 100) : null,
+        idempotencyKey: idempotencyKey ? String(idempotencyKey).slice(0, 128) : null,
         capturedAt: capturedAt ? new Date(capturedAt) : new Date(),
       },
-    }),
-    prisma.shelter.update({
+    });
+  const updatedShelter = await tx.shelter.update({
       where: { id: parsedShelterId },
       data: shelterUpdateData,
-    }),
-  ]);
+    });
 
+  const log = syncLog ? await tx.offlineSyncLog.create({ data: { ...syncLog, parsedData: JSON.stringify({ ...JSON.parse(syncLog.parsedData), appliedStatus: updatedShelter.status, eventId: event.id }) } }) : null;
+  if (waterCrossed || rationsCrossed || medicalCrossed) {
+    const resources = [waterCrossed && 'Water', rationsCrossed && 'Rations', medicalCrossed && 'Medical kits'].filter(Boolean).join(', ');
+    await recordNotice(tx, 'RESTOCK', `${updatedShelter.name}: ${resources} need restocking`, true);
+  }
+  return { event, updatedShelter, log, waterCrossed, rationsCrossed, medicalCrossed, existingShelter, newWaterLiters, newRations, newMedicalKits };
+  });
+  if (result.duplicateIgnored) return result;
+  const { event, updatedShelter, waterCrossed, rationsCrossed, medicalCrossed, existingShelter, newWaterLiters, newRations, newMedicalKits } = result;
   broadcastShelterAudit(updatedShelter);
 
   if (waterCrossed || rationsCrossed || medicalCrossed) {
@@ -330,6 +340,7 @@ async function logShelterEventInternal({
   return {
     event,
     shelter: updatedShelter,
+    log: result.log,
     duplicateIgnored: false,
   };
 }
@@ -339,108 +350,34 @@ async function logShelterEventInternal({
  */
 async function auditShelter(req, res) {
   try {
-    const { id } = req.params;
-    const shelterId = parseInt(id);
-    if (isNaN(shelterId)) {
-      return res.status(400).json({ error: 'Invalid shelter ID' });
-    }
-
-    const existing = await prisma.shelter.findUnique({ where: { id: shelterId } });
-    if (!existing) {
-      return res.status(404).json({ error: 'Shelter not found' });
-    }
-
-    const {
-      currentOccupancy,
-      capacity,
-      waterOk,
-      rationsOk,
-      restroomsOk,
-      powerOk,
-      waterLitersRemaining,
-      waterThreshold,
-      rationsUnitsRemaining,
-      rationsThreshold,
-    } = req.body;
-
-    // 1. Compute deltas for accumulative fields
-    let deltaOccupancy = 0;
-    if (typeof currentOccupancy === 'number') {
-      deltaOccupancy = currentOccupancy - existing.currentOccupancy;
-    }
-
-    let deltaWaterLiters = 0;
-    if (typeof waterLitersRemaining === 'number') {
-      deltaWaterLiters = waterLitersRemaining - (existing.waterLitersRemaining ?? 0);
-    }
-
-    let deltaRations = 0;
-    if (typeof rationsUnitsRemaining === 'number') {
-      deltaRations = rationsUnitsRemaining - (existing.rationsUnitsRemaining ?? 0);
-    }
-
-    let currentShelterState = existing;
-
-    // 2. If any delta is non-zero, route strictly through logShelterEventInternal
-    if (deltaOccupancy !== 0 || deltaWaterLiters !== 0 || deltaRations !== 0) {
-      const deltaResult = await logShelterEventInternal({
-        shelterId,
-        deltaOccupancy,
-        deltaWaterLiters,
-        deltaRations,
-        reason: 'Ground readiness audit',
-        operatorName: req.user ? req.user.name : 'Ground Auditor',
-      });
-      currentShelterState = deltaResult.shelter;
-    }
-
-    // 3. Keep as direct writes (Fix 3): booleans, thresholds, capacity
-    const updatedCapacity = typeof capacity === 'number' ? capacity : currentShelterState.capacity;
-    const updatedWaterOk = typeof waterOk === 'boolean' ? waterOk : currentShelterState.waterOk;
-    const updatedRationsOk = typeof rationsOk === 'boolean' ? rationsOk : currentShelterState.rationsOk;
-    const updatedRestrooms = typeof restroomsOk === 'boolean' ? restroomsOk : currentShelterState.restroomsOk;
-    const updatedPower = typeof powerOk === 'boolean' ? powerOk : currentShelterState.powerOk;
-    const updatedWaterThreshold =
-      typeof waterThreshold === 'number' ? waterThreshold : currentShelterState.waterThreshold;
-    const updatedRationsThreshold =
-      typeof rationsThreshold === 'number' ? rationsThreshold : currentShelterState.rationsThreshold;
-
-    const newStatus = computeShelterStatus(
-      currentShelterState.currentOccupancy,
-      updatedCapacity,
-      updatedWaterOk,
-      updatedRationsOk,
-      currentShelterState.waterLitersRemaining,
-      updatedWaterThreshold,
-      currentShelterState.rationsUnitsRemaining,
-      updatedRationsThreshold
-    );
-
-    // Direct write strictly for boolean & config fields (the only designated direct write outside logShelterEventInternal)
-    const updated = await prisma.shelter.update({
-      where: { id: shelterId },
-      data: {
-        capacity: updatedCapacity,
-        waterOk: updatedWaterOk,
-        rationsOk: updatedRationsOk,
-        restroomsOk: updatedRestrooms,
-        powerOk: updatedPower,
-        waterThreshold: updatedWaterThreshold,
-        rationsThreshold: updatedRationsThreshold,
-        status: newStatus,
-        lastAuditedAt: new Date(),
-      },
+    const shelterId = Number(req.params.id);
+    const updated = await transaction(async tx => {
+      const existing = await tx.shelter.findUnique({ where: { id: shelterId } });
+      if (!existing) throw Object.assign(new Error('Shelter not found'), { status: 404 });
+      const data = { lastAuditedAt: new Date() };
+      const fields = ['capacity', 'currentOccupancy', 'waterOk', 'rationsOk', 'restroomsOk', 'powerOk', 'waterLitersRemaining', 'waterThreshold', 'rationsUnitsRemaining', 'rationsThreshold', 'medicalKitsRemaining', 'medicalThreshold', 'blanketsRemaining', 'blanketsThreshold'];
+      for (const field of fields) if (req.body[field] != null) data[field] = req.body[field];
+      const finalState = { ...existing, ...data };
+      if (finalState.capacity < finalState.currentOccupancy) throw Object.assign(new Error('Capacity cannot be lower than current occupancy'), { status: 409 });
+      if(finalState.currentOccupancy<await tx.shelterIntake.count({where:{shelterId,status:'PRESENT'}}))throw Object.assign(new Error('Record named departures before reducing occupancy below present arrivals'),{status:409});
+      data.status = computeShelterStatus(finalState);
+      const deltas = {
+        deltaOccupancy: finalState.currentOccupancy - existing.currentOccupancy,
+        deltaWaterLiters: (finalState.waterLitersRemaining ?? 0) - (existing.waterLitersRemaining ?? 0),
+        deltaRations: (finalState.rationsUnitsRemaining ?? 0) - (existing.rationsUnitsRemaining ?? 0),
+        deltaMedicalKits: (finalState.medicalKitsRemaining ?? 0) - (existing.medicalKitsRemaining ?? 0),
+        deltaBlankets: (finalState.blanketsRemaining ?? 0) - (existing.blanketsRemaining ?? 0),
+      };
+      await tx.shelterEvent.create({ data: { shelterId, ...deltas, reason: 'Ground readiness audit', operatorName: req.user.name, capturedAt: new Date() } });
+      const updated = await tx.shelter.update({ where: { id: shelterId }, data });
+      if (updated.status === 'RED') await recordNotice(tx, 'RESTOCK', `${updated.name}: readiness needs attention`, true);
+      return updated;
     });
-
     broadcastShelterAudit(updated);
-
-    res.status(200).json({
-      message: `Shelter audit applied. Current readiness status: ${newStatus}`,
-      shelter: updated,
-    });
+    if (updated.status === 'RED') broadcastRestockNeeded(updated, { resourceType: 'READINESS', waterLitersRemaining: updated.waterLitersRemaining, rationsUnitsRemaining: updated.rationsUnitsRemaining });
+    res.json({ message: 'Shelter audit applied. Current readiness status: ' + updated.status, shelter: updated });
   } catch (error) {
-    console.error('Error auditing shelter:', error);
-    res.status(500).json({ error: 'Failed to audit shelter' });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to audit shelter' });
   }
 }
 
@@ -492,6 +429,7 @@ async function logShelterEvent(req, res) {
       shelter: result.shelter,
     });
   } catch (error) {
+    if(error.status)return res.status(error.status).json({error:error.message});
     if (error.message === 'Invalid shelter ID') {
       return res.status(400).json({ error: error.message });
     }
@@ -499,7 +437,7 @@ async function logShelterEvent(req, res) {
       return res.status(404).json({ error: error.message });
     }
     console.error('Error logging shelter event:', error);
-    return res.status(500).json({ error: 'Failed to record shelter delta event' });
+    return res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to record shelter delta event' });
   }
 }
 
@@ -520,7 +458,7 @@ async function getShelterEvents(req, res) {
     res.status(200).json({ events });
   } catch (error) {
     console.error('Error fetching shelter events:', error);
-    res.status(500).json({ error: 'Failed to fetch shelter events' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch shelter events' });
   }
 }
 

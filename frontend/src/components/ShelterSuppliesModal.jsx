@@ -1,16 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { Package, AlertCircle, CheckCircle2, Plus, ArrowUp, X, Truck, FileCheck2, Clock, QrCode, Printer, Copy, Check } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Package, CheckCircle2, Plus, X, Truck, FileCheck2, QrCode, Printer, Copy, Check } from 'lucide-react';
 import QRCode from 'qrcode';
 import api from '../services/api';
+import { useSocket } from '../context/SocketContext';
 
 export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
+  const { socket } = useSocket();
   const [activeTab, setActiveTab] = useState('REQUIREMENTS'); // 'REQUIREMENTS' or 'SHIPMENTS'
   const [supplies, setSupplies] = useState([]);
   const [shipments, setShipments] = useState([]);
+  const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showAddNeed, setShowAddNeed] = useState(false);
   const [showAddShipment, setShowAddShipment] = useState(false);
-  const [selectedSupplyForShipment, setSelectedSupplyForShipment] = useState(null);
+  const [, setSelectedSupplyForShipment] = useState(null);
   const [distributions, setDistributions] = useState([]);
   const [qrModalItem, setQrModalItem] = useState(null);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -29,8 +32,9 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
     quantityVerified: 50,
   });
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const supplyUrl = shelter ? `/supplies?shelterId=${shelter.id}` : '/supplies';
       const shipmentUrl = shelter ? `/supply-shipments?shelterId=${shelter.id}` : '/supply-shipments';
@@ -39,19 +43,19 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
 
       const [supplyRes, shipmentRes, distRes] = await Promise.all([
         api.get(supplyUrl),
-        api.get(shipmentUrl).catch(() => ({ data: { shipments: [] } })),
-        api.get(distUrl).catch(() => ({ data: { distributions: [] } })),
+        api.get(shipmentUrl),
+        api.get(distUrl),
       ]);
 
       setSupplies(supplyRes.data.supplies || []);
       setShipments(shipmentRes.data.shipments || []);
       setDistributions(distRes.data.distributions || []);
     } catch (err) {
-      console.error('Failed to load supplies or shipments', err);
+      setLoadError(err.response?.data?.error || 'Could not load supply records. Please retry.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [shelter]);
 
   useEffect(() => {
     if (isOpen) {
@@ -59,7 +63,15 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
       setShowAddNeed(false);
       setShowAddShipment(false);
     }
-  }, [isOpen, shelter]);
+  }, [isOpen, shelter, loadData]);
+
+  useEffect(() => {
+    if (!isOpen || !socket) return;
+    const refreshStock = payload => { if (!shelter || payload.supply?.shelterId === shelter.id) loadData(); };
+    socket.on('supply:updated', refreshStock);
+    socket.on('connect', loadData);
+    return () => { socket.off('supply:updated', refreshStock); socket.off('connect', loadData); };
+  }, [isOpen, socket, shelter, loadData]);
 
   const handleCreateNeed = async (e) => {
     e.preventDefault();
@@ -117,10 +129,12 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
     }
   };
 
-  const handleCopyCode = (text) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
+  const handleCopyCode = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    } catch { alert('Clipboard access is unavailable. Select and copy the displayed code.'); }
   };
 
   const handleOpenShipmentModal = (supplyItem) => {
@@ -198,15 +212,15 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
           s.id === item.id
             ? {
                 ...s,
-                quantityFulfilled: s.quantityFulfilled + amount,
-                remainingDeficit: Math.max(0, s.quantityNeeded - (s.quantityFulfilled + amount)),
-                deficit: Math.max(0, s.quantityNeeded - (s.quantityFulfilled + amount)),
+                ...res.data.updatedSupplyRequest,
+                remainingDeficit: res.data.remainingDeficit,
+                deficit: res.data.remainingDeficit,
               }
             : s
         )
       );
     } catch (err) {
-      console.error('Failed to quick-fulfill supply item', err);
+      alert(err.response?.data?.error || 'Could not record this shipment.');
     }
   };
 
@@ -225,24 +239,27 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
             <Package className="w-5 h-5 text-[#2E6E4E]" />
             <div>
               <h2 className="font-display font-bold text-base uppercase tracking-tight">
-                Relief Supply-Demand Gap & Shipment Manifest
+                Shelter supplies
               </h2>
               <p className="text-[11px] font-mono text-[#14231F]/70">
-                {shelter ? `Target Facility: ${shelter.name}` : 'Multi-Shelter Relief Pipeline'}
+                {shelter ? shelter.name : 'All shelters'}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close shelter supplies"
             className="p-1 bg-[#EFECE4] rounded text-xs hover:bg-[#D8D3C7]"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
+        {loading && <p role="status" className="py-2 text-sm">Loading supply records…</p>}
+        {loadError && <p role="alert" className="py-2 text-red-700">{loadError} <button onClick={loadData} className="underline">Retry</button></p>}
         {/* View Mode Navigation & Actions */}
         <div className="py-2.5 flex items-center justify-between border-b border-[#D8D3C7] flex-wrap gap-2">
-          <div className="flex items-center bg-[#EFECE4] p-0.5 border border-[#D8D3C7] rounded text-xs font-mono">
+          <div className="flex flex-wrap max-w-full items-center bg-[#EFECE4] p-0.5 border border-[#D8D3C7] rounded text-xs">
             <button
               type="button"
               onClick={() => setActiveTab('REQUIREMENTS')}
@@ -253,7 +270,7 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
               }`}
             >
               <Package className="w-3.5 h-3.5" />
-              <span>SUPPLY GAPS ({supplies.length})</span>
+              <span>Requests ({supplies.length})</span>
             </button>
             <button
               type="button"
@@ -265,7 +282,7 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
               }`}
             >
               <Truck className="w-3.5 h-3.5" />
-              <span>VERIFIED SHIPMENTS ({shipments.length})</span>
+              <span>Shipments ({shipments.length})</span>
             </button>
             <button
               type="button"
@@ -277,7 +294,7 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
               }`}
             >
               <FileCheck2 className="w-3.5 h-3.5" />
-              <span>CITIZEN PICKUP LOG ({distributions.length})</span>
+              <span>Pickup history ({distributions.length})</span>
             </button>
           </div>
 
@@ -291,14 +308,14 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
                 className="flex items-center gap-1 px-2.5 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F] border border-[#D8D3C7] rounded font-mono font-bold text-xs"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>{showAddNeed ? 'Cancel' : 'Request Relief Need'}</span>
+                <span>{showAddNeed ? 'Cancel' : 'Request supplies'}</span>
               </button>
               <button
                 onClick={() => handleOpenShipmentModal(null)}
                 className="flex items-center gap-1 px-2.5 py-1 bg-[#2E6E4E] hover:bg-[#23583e] text-white rounded font-display font-bold text-xs"
               >
                 <Truck className="w-3.5 h-3.5" />
-                <span>Log Verified Shipment</span>
+                <span>Record shipment</span>
               </button>
             </div>
           )}
@@ -436,7 +453,7 @@ export default function ShelterSuppliesModal({ isOpen, onClose, shelter }) {
         )}
 
         {/* Content Area */}
-        <div className="overflow-y-auto flex-1 mt-3">
+        <div className="overflow-auto min-w-0 flex-1 mt-3">
           {activeTab === 'REQUIREMENTS' ? (
             supplies.length === 0 ? (
               <div className="p-8 text-center text-xs font-mono text-[#14231F]/60">

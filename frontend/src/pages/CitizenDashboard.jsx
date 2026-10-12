@@ -1,4 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import useDashboardRefresh from '../hooks/useDashboardRefresh';
+import { refreshSections } from '../services/dashboardRefresh';
+import DashboardTabs from '../components/DashboardTabs';
+import QuickActions from '../components/QuickActions';
+import {EvacuationNotice} from '../components/EvacuationTools';
+import {nearbyAdvisories} from '../services/evacuationPlan';
+import useConsoleSection from '../hooks/useConsoleSection';
+import RescueProgress from '../components/RescueProgress';
+import { STATUS_LABELS } from '../services/sosWorkflow';
+import OperationalStats from '../components/OperationalStats';
+import { subscribeSocketEvents } from '../services/socketEvents';
+import useNow from '../hooks/useNow';
+import React, { useState, useEffect, useCallback,lazy,Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
@@ -9,15 +21,25 @@ import ShelterList from '../components/ShelterList';
 import HazardReportModal from '../components/HazardReportModal';
 import HazardConfirmationPrompt from '../components/HazardConfirmationPrompt';
 import SafetyStatusWidget from '../components/SafetyStatusWidget';
+import MyRequests from '../components/MyRequests';
 import OfflineSimulationDrawer from '../components/OfflineSimulationDrawer';
-import SupplyScanner from '../components/SupplyScanner';
-import { AlertTriangle, CheckCircle, Clock, ShieldCheck, Camera, Radio, AlertOctagon, HelpCircle, Package, QrCode } from 'lucide-react';
+const SupplyScanner=lazy(()=>import('../components/SupplyScanner'));
+import { AlertTriangle, CheckCircle, Clock, ShieldCheck, Camera, AlertOctagon, Package, QrCode } from 'lucide-react';
 
 export default function CitizenDashboard() {
+  const now = useNow();
   const { user } = useAuth();
   const { socket } = useSocket();
 
+  const refreshVersion = React.useRef(0);
+  const invalidateRefresh = useCallback(() => { refreshVersion.current++; }, []);
+  const [notice, setNotice] = useState('');
+  const [dataError, setDataError] = useState('');
+  const [verifying, setVerifying] = useState(false), [locLoading, setLocLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [activeView, setActiveView] = useConsoleSection(['SHELTERS','REQUESTS','MAP','SAFETY'],'SHELTERS');
   const [alerts, setAlerts] = useState([]);
+  const [evacuationAdvisories,setEvacuationAdvisories]=useState([]);
   const [shelters, setShelters] = useState([]);
   const [hazardReports, setHazardReports] = useState([]);
   const [mySOSList, setMySOSList] = useState([]);
@@ -26,12 +48,14 @@ export default function CitizenDashboard() {
   const [userCoords, setUserCoords] = useState(
     typeof user?.lat === 'number' && typeof user?.lng === 'number'
       ? { lat: user.lat, lng: user.lng }
-      : { lat: 20.5937, lng: 78.9629 }
+      : null
   );
   const [hazardModalOpen, setHazardModalOpen] = useState(false);
   const [supplyScannerOpen, setSupplyScannerOpen] = useState(false);
   const [myPickups, setMyPickups] = useState([]);
   const [loadingPickups, setLoadingPickups] = useState(false);
+  const [pickupError, setPickupError] = useState('');
+  const showOnMap = coords => { setFocusCoords(coords); setActiveView('MAP'); };
 
   // Synchronize with authenticated user's saved GPS ONLY if live GPS hasn't been acquired yet
   useEffect(() => {
@@ -40,39 +64,39 @@ export default function CitizenDashboard() {
     }
   }, [user]);
 
-  const fetchMyPickups = async () => {
+  const fetchMyPickups = useCallback(async () => {
     try {
       setLoadingPickups(true);
       const res = await api.get('/supplies/distributions/mine');
-      setMyPickups(res.data.distributions || []);
-    } catch (err) {
-      console.warn('Could not load citizen pickups:', err.message);
+      setMyPickups(res.data.distributions || []); setPickupError('');
+    } catch {
+      setPickupError('Could not load pickup history.');
     } finally {
       setLoadingPickups(false);
     }
-  };
+  }, []);
 
   // Fetch initial data
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    const version = ++refreshVersion.current; setDataLoading(true);
     try {
-      const [alertsRes, sheltersRes, sosRes, hazardsRes] = await Promise.all([
-        api.get('/alerts'),
-        api.get('/shelters'),
-        api.get('/sos/my').catch(() => ({ data: { requests: [] } })),
-        api.get('/hazards').catch(() => ({ data: { reports: [] } })),
-      ]);
-      setAlerts(alertsRes.data.alerts || []);
-      setShelters(sheltersRes.data.shelters || []);
-      setMySOSList(sosRes.data.requests || []);
-      setHazardReports(hazardsRes.data.reports || []);
+      const result = await refreshSections([
+        { label: 'Alerts', load: () => api.get('/alerts'), apply: res => setAlerts(res.data.alerts || []) },
+        { label: 'Evacuation guidance', load: () => api.get('/field/evacuation'), apply: res => setEvacuationAdvisories(res.data.advisories || []) },
+        { label: 'Shelters', load: () => api.get('/shelters'), apply: res => setShelters(res.data.shelters || []) },
+        { label: 'Requests', load: () => api.get('/sos/my'), apply: res => setMySOSList(res.data.requests || []) },
+        { label: 'Hazards', load: () => api.get('/hazards'), apply: res => setHazardReports(res.data.reports || []) },
+      ], () => version === refreshVersion.current);
+      if (!result.applied) return;
+      setDataError(result.failed.length ? 'Could not refresh: ' + result.failed.join(', ') + '. Previously loaded data may be out of date.' : '');
       fetchMyPickups();
-    } catch (err) {
-      console.error('Error loading citizen dashboard data', err);
-    }
-  };
+    } catch { if (version === refreshVersion.current) setDataError('Could not refresh the dashboard. Please retry.'); }
+    finally { if (version === refreshVersion.current) setDataLoading(false); }
+  }, [fetchMyPickups]);
+
+  useDashboardRefresh(socket, fetchData, invalidateRefresh);
 
   useEffect(() => {
-    fetchData();
 
     // Auto-detect browser GPS on mount and prioritize over stored DB coords
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -88,80 +112,74 @@ export default function CitizenDashboard() {
         { timeout: 8000, enableHighAccuracy: true }
       );
     }
-  }, []);
+  }, [fetchData]);
 
   // Socket.io live listeners
   useEffect(() => {
     if (!socket) return;
+    const handlers = {};
+    const on = (event, handler) => { handlers[event] = handler; };
 
-    socket.on('alert:new', (newAlert) => {
+    on('alert:new', (newAlert) => {
       setAlerts((prev) => [newAlert, ...prev.filter((a) => a.id !== newAlert.id)]);
     });
 
-    socket.on('alert:deactivated', (deactivated) => {
+    on('alert:deleted', payload => { if (payload.id) setAlerts(prev => prev.filter(a => a.id !== payload.id)); });
+    on('alert:deactivated', (deactivated) => {
       setAlerts((prev) => prev.filter((a) => a.id !== deactivated.id));
     });
 
-    socket.on('sos:status_changed', (updatedSOS) => {
+    on('sos:created', (created) => { if (created.userId === user?.id) setMySOSList(prev => [created, ...prev.filter(s => s.id !== created.id)]); });
+    on('sos:status_changed', (updatedSOS) => {
       setMySOSList((prev) =>
         prev.map((s) => (s.id === updatedSOS.id ? updatedSOS : s))
       );
     });
 
-    socket.on('shelter:occupancy_changed', (updatedShelter) => {
+    on('shelter:occupancy_changed', (updatedShelter) => {
       setShelters((prev) =>
-        prev.map((s) => (s.id === updatedShelter.id ? updatedShelter : s))
+        [updatedShelter, ...prev.filter((s) => s.id !== updatedShelter.id)]
       );
     });
 
-    socket.on('shelter:audit_updated', (updatedShelter) => {
+    on('shelter:audit_updated', (updatedShelter) => {
       setShelters((prev) =>
-        prev.map((s) => (s.id === updatedShelter.id ? updatedShelter : s))
+        [updatedShelter, ...prev.filter((s) => s.id !== updatedShelter.id)]
       );
     });
 
-    socket.on('hazard:new', (newReport) => {
+    on('hazard:new', (newReport) => {
       setHazardReports((prev) => [newReport, ...prev.filter((r) => r.id !== newReport.id)]);
     });
 
-    socket.on('hazard:confirmed', (updatedReport) => {
+    on('hazard:confirmed', (updatedReport) => {
       setHazardReports((prev) =>
         prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
       );
     });
 
-    socket.on('hazard:tier_changed', (updatedReport) => {
+    on('hazard:tier_changed', (updatedReport) => {
       setHazardReports((prev) =>
         prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
       );
     });
 
-    socket.on('supply:distributed', (data) => {
+    on('supply:distributed', (data) => {
       if (data?.distribution && data.distribution.citizenId === user?.id) {
         setMyPickups((prev) => [data.distribution, ...prev.filter((p) => p.id !== data.distribution.id)]);
       }
     });
 
-    return () => {
-      socket.off('alert:new');
-      socket.off('alert:deactivated');
-      socket.off('sos:status_changed');
-      socket.off('shelter:occupancy_changed');
-      socket.off('shelter:audit_updated');
-      socket.off('hazard:new');
-      socket.off('hazard:confirmed');
-      socket.off('hazard:tier_changed');
-      socket.off('supply:distributed');
-    };
-  }, [socket]);
+    return subscribeSocketEvents(socket, handlers);
+  }, [socket, user?.id]);
 
   const handleSOSCreated = (newSOS) => {
-    setMySOSList((prev) => [newSOS, ...prev]);
+    setMySOSList((prev) => [newSOS, ...prev.filter(item => item.id !== newSOS.id)]);
     setFocusCoords([newSOS.lat, newSOS.lng]);
   };
 
   const handleHazardReportCreated = (newReport) => {
-    setHazardReports((prev) => [newReport, ...prev]);
+    setHazardReports((prev) => [newReport, ...prev.filter(item => item.id !== newReport.id)]);
     setFocusCoords([newReport.lat, newReport.lng]);
   };
 
@@ -171,9 +189,9 @@ export default function CitizenDashboard() {
       setHazardReports((prev) =>
         prev.map((r) => (r.id === reportId ? res.data.report : r))
       );
-      alert(`Report confirmed! Current confidence tier: ${res.data.report.confidenceTier}`);
+      setNotice('Hazard confirmation saved.');
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to submit confirmation');
+      setDataError(err.response?.data?.error || 'Failed to submit confirmation');
     }
   };
 
@@ -184,45 +202,47 @@ export default function CitizenDashboard() {
   };
 
   const handleCitizenVerify = async (sosId, confirmed) => {
+    setVerifying(true);
     try {
       const res = await api.patch(`/sos/${sosId}/citizen-verify`, { confirmed });
       setMySOSList((prev) => prev.map((s) => (s.id === sosId ? res.data.sos : s)));
       if (confirmed) {
-        alert('Rescue verified and confirmed complete. We are glad you are safe!');
+        setNotice('Rescue confirmed complete.');
       } else {
-        alert('Distress ticket REOPENED with URGENT priority. Responders alerted immediately!');
+        setNotice('Request reopened with urgent priority. The response team has been notified.');
       }
     } catch (err) {
-      console.error('Error verifying rescue closure:', err);
-      alert(err.response?.data?.error || 'Failed to verify rescue closure');
-    }
+      setDataError(err.response?.data?.error || 'Failed to verify rescue closure');
+    } finally { setVerifying(false); }
   };
 
   const handleUpdateLocation = () => {
     if (!navigator.geolocation) {
-      alert('Geolocation is not supported by your browser.');
+      setDataError('Geolocation is not supported. Enter the incident coordinates manually when requesting help.');
       return;
     }
+    setLocLoading(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        liveGpsAcquired.current = true;
         setUserCoords(coords);
         setFocusCoords([coords.lat, coords.lng]);
         try {
           await api.patch('/auth/location', coords);
-          alert(`Your GPS location was updated successfully (${coords.lat.toFixed(4)}°N, ${coords.lng.toFixed(4)}°E). Precision alert radius matching is now active!`);
+          setNotice('Your location was saved.');
         } catch (err) {
-          console.error('Failed to sync location with server:', err);
-        }
+          setDataError(err.response?.data?.error || 'Location detected but could not be saved. Please retry.');
+        } finally { setLocLoading(false); }
       },
       (err) => {
-        alert('Could not acquire your current location: ' + err.message);
+        setDataError('Could not acquire your location: ' + err.message); setLocLoading(false);
       },
       { timeout: 10000, enableHighAccuracy: true }
     );
   };
 
-  const activeSOS = mySOSList.find((s) => s.status !== 'RESOLVED');
+  const activeSOS = mySOSList.find((s) => !['RESOLVED', 'CANCELLED'].includes(s.status));
   // Pending citizen rescue closure loop (Item 1.3)
   const pendingVerificationSOS = mySOSList.find(
     (s) => s.status === 'RESOLVED' && s.citizenConfirmedResolved !== true
@@ -233,11 +253,15 @@ export default function CitizenDashboard() {
   );
 
   return (
-    <div className="flex flex-col min-h-[calc(100vh-61px)]">
+    <div className="flex flex-col min-w-0 w-full min-h-[calc(100vh-61px)]">
+      {notice && <p role="status" className="px-4 py-3 bg-emerald-50 text-emerald-900">{notice} <button className="underline ml-2" onClick={() => setNotice('')}>Dismiss</button></p>}
+      {dataLoading && <p role="status" className="px-4 py-2 text-sm">Refreshing live data…</p>}
+      {dataError && <div role="alert" className="px-4 py-3 bg-red-50 text-red-800">{dataError} <button type="button" className="underline font-bold" onClick={fetchData}>Retry</button></div>}
       {/* Real-time Alert Banner */}
       <AlertBanner
         alerts={alerts}
-        onSelectAlert={(alert) => setFocusCoords([alert.lat, alert.lng])}
+        location={userCoords}
+        onSelectAlert={(alert) => showOnMap([alert.lat, alert.lng])}
       />
 
       <div className="max-w-7xl w-full mx-auto p-3 sm:p-4 pb-16 flex-1 flex flex-col gap-4">
@@ -247,36 +271,26 @@ export default function CitizenDashboard() {
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-[#2E6E4E]"></span>
               <h1 className="font-display font-bold text-lg sm:text-xl text-[#14231F] tracking-tight">
-                CITIZEN RESILIENCE & SOS CONSOLE
+                Your safety dashboard
               </h1>
             </div>
             <div className="flex items-center gap-2 flex-wrap mt-0.5">
               <p className="text-xs sm:text-sm text-[#14231F]/70">
-                Welcome {user?.name || 'Citizen'} • GPS: {userCoords ? `${userCoords.lat.toFixed(4)}°N, ${userCoords.lng.toFixed(4)}°E` : 'Auto-detecting...'}
+                {user?.name || 'Citizen'} · Request help or find a nearby shelter.
               </p>
               <button
                 type="button"
-                id="citizen-update-gps-btn"
+                id="citizen-update-gps-btn" disabled={locLoading}
                 onClick={handleUpdateLocation}
                 className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] text-[#14231F] text-[10px] font-mono rounded font-semibold transition-colors"
                 title="Acquire current browser GPS coordinates and sync with alert radius delivery system"
               >
-                📍 Update My GPS
+                {locLoading ? 'Updating…' : 'Update location'}
               </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              id="citizen-supply-scan-btn"
-              onClick={() => setSupplyScannerOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-3 bg-[#14231F] hover:bg-black text-white font-display font-bold text-xs sm:text-sm rounded transition-colors whitespace-nowrap shrink-0 shadow-xs"
-              title="Scan relief item QR code at shelter pickup station"
-            >
-              <Package className="w-4 h-4 text-[#4ADE80]" />
-              <span>SCAN SUPPLY PICKUP</span>
-            </button>
+          <div className="flex flex-wrap items-center gap-2.5">
 
             <button
               id="report-hazard-btn"
@@ -284,24 +298,17 @@ export default function CitizenDashboard() {
               className="flex items-center gap-1.5 px-4 py-3 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] text-[#14231F] font-display font-bold text-xs sm:text-sm rounded transition-colors whitespace-nowrap shrink-0"
             >
               <Camera className="w-4 h-4 text-[#C97A2B]" />
-              <span>REPORT HAZARD</span>
+              <span>Report a hazard</span>
             </button>
 
             <SOSButton onSOSCreated={handleSOSCreated} defaultCoords={userCoords} />
           </div>
         </div>
 
-        {/* Nearby Peer-Confirmation Prompt (Amber/Grey hazard verification) */}
-        <HazardConfirmationPrompt
-          reports={hazardReports}
-          userCoords={userCoords}
-          onConfirmed={(updated) =>
-            setHazardReports((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
-          }
-        />
-
+        <QuickActions user={user} tickets={mySOSList} loading={dataLoading} stale={Boolean(dataError)} guidance={nearbyAdvisories(evacuationAdvisories,userCoords,user.region,now)[0]} location={userCoords}/>
+        <EvacuationNotice advisories={evacuationAdvisories} coords={userCoords} user={user}/>
         {/* Active Emergency Signal Tracker */}
-        {activeSOS && (
+        {activeView !== 'REQUESTS' && activeSOS && (
             <div
               id="active-sos-tracker"
               className={`p-4 rounded border ${
@@ -318,19 +325,16 @@ export default function CitizenDashboard() {
                     <ShieldCheck className="w-6 h-6 flex-shrink-0 mt-0.5" />
                   )}
                   <div>
-                    <div className="font-mono text-xs uppercase font-bold tracking-wider">
-                      {activeSOS.status === 'PENDING'
-                        ? '● SOS BROADCAST ACTIVE — AWAITING VOLUNTEER DISPATCH'
-                        : activeSOS.status === 'VERIFIED'
-                        ? '● COMMAND VERIFIED — DISPATCH IN PROGRESS'
-                        : '✓ VOLUNTEER ASSIGNED & EN ROUTE'}
+                    <div className="text-sm font-semibold">
+                      {STATUS_LABELS[activeSOS.status] || activeSOS.status}
                     </div>
                     <div className="text-sm font-semibold text-[#14231F] mt-1">
                       &ldquo;{activeSOS.message}&rdquo;
                     </div>
                   <div className="text-xs font-mono text-[#14231F]/70 mt-0.5">
-                    Signal Transmitted at {new Date(activeSOS.createdAt).toLocaleTimeString()} • Coordinates: {activeSOS.lat.toFixed(4)}, {activeSOS.lng.toFixed(4)}
+                    Sent at {new Date(activeSOS.createdAt).toLocaleTimeString()}
                   </div>
+                  <RescueProgress ticket={activeSOS} />
                   {activeSOS.vulnerabilityTags && activeSOS.vulnerabilityTags.length > 0 && (
                     <div className="flex gap-1 mt-1.5">
                       {activeSOS.vulnerabilityTags.map((tag) => (
@@ -345,7 +349,7 @@ export default function CitizenDashboard() {
 
               <div className="text-right flex-shrink-0">
                 <span className="font-mono text-xs font-bold px-2 py-1 bg-white/80 border border-current rounded uppercase">
-                  STATUS: {activeSOS.status}
+                  Request #{activeSOS.id}
                 </span>
               </div>
             </div>
@@ -353,7 +357,7 @@ export default function CitizenDashboard() {
         )}
 
         {/* Rescue Closure Loop: Action Required by Citizen (Item 1.3) */}
-        {pendingVerificationSOS && (
+        {activeView !== 'REQUESTS' && pendingVerificationSOS && (
           <div
             id="rescue-verification-card"
             className="p-4 bg-[#C97A2B]/10 border-2 border-[#C97A2B] rounded shadow-md text-xs font-mono space-y-3 animate-fade-in"
@@ -361,10 +365,10 @@ export default function CitizenDashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-[#C97A2B] font-bold text-sm font-display uppercase tracking-wide">
                 <AlertOctagon className="w-5 h-5 animate-pulse" />
-                <span>ACTION REQUIRED // RESCUE CLOSURE CONFIRMATION</span>
+                <span>Did help arrive?</span>
               </div>
               <span className="px-2 py-0.5 bg-[#C97A2B] text-white rounded text-[10px] font-bold">
-                AWAITING CITIZEN CONFIRMATION
+                Please confirm
               </span>
             </div>
 
@@ -380,46 +384,41 @@ export default function CitizenDashboard() {
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-1">
               <button
                 type="button"
-                id="verify-rescue-yes-btn"
+                id="verify-rescue-yes-btn" disabled={verifying}
                 onClick={() => handleCitizenVerify(pendingVerificationSOS.id, true)}
                 className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-[#2E6E4E] hover:bg-[#23583e] text-white font-display font-bold text-xs rounded transition-all shadow-sm"
               >
                 <CheckCircle className="w-4 h-4" />
-                <span>YES, I AM SAFE // CONFIRM RESCUE COMPLETE</span>
+                <span>Yes, I am safe</span>
               </button>
 
               <button
                 type="button"
-                id="verify-rescue-no-btn"
+                id="verify-rescue-no-btn" disabled={verifying}
                 onClick={() => handleCitizenVerify(pendingVerificationSOS.id, false)}
                 className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-[#B23A2E] hover:bg-[#9E2E23] text-white font-display font-bold text-xs rounded transition-all shadow-sm"
               >
                 <AlertTriangle className="w-4 h-4" />
-                <span>NO, STILL TRAPPED // REOPEN WITH URGENT PRIORITY</span>
+                <span>I still need help</span>
               </button>
             </div>
           </div>
         )}
 
         {/* Verified Closed Banner */}
-        {!activeSOS && !pendingVerificationSOS && verifiedClosedSOS && (
+        {activeView !== 'REQUESTS' && !activeSOS && !pendingVerificationSOS && verifiedClosedSOS && (
           <div className="p-3 bg-[#2E6E4E]/10 border border-[#2E6E4E] text-[#2E6E4E] rounded flex items-center justify-between text-xs font-mono">
             <div className="flex items-center gap-2">
               <CheckCircle className="w-4 h-4" />
-              <span>Prior distress signal at {verifiedClosedSOS.lat.toFixed(3)}°N has been verified closed by you. All responder units stood down.</span>
+              <span>Your previous rescue is complete. You confirmed that you are safe.</span>
             </div>
           </div>
         )}
 
-        {/* Map-First Split View (65% Map / 35% Panel) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1">
-          {/* Map Hero (65% width) */}
-          <div className="lg:col-span-8 flex flex-col min-h-[480px]">
-            <div className="flex items-center justify-between mb-1 text-xs font-mono text-[#14231F]/70">
-              <span>SITUATION MAP (60% VIEWPORT)</span>
-              <span>GREY: UNCONFIRMED • AMBER: CONFIRMED • RED: VERIFIED / SOS</span>
-            </div>
-            <MapView
+        <OperationalStats />
+        <DashboardTabs tabs={[{ id: 'SHELTERS', label: 'Find shelter' }, { id: 'REQUESTS', label: 'My requests' }, { id: 'MAP', label: 'Map' }, { id: 'SAFETY', label: 'Safety & supplies' }]} value={activeView} onChange={setActiveView} />
+        {activeView === 'REQUESTS' && <MyRequests requests={mySOSList} onUpdated={sos => setMySOSList(prev => prev.map(item => item.id === sos.id ? sos : item))} onViewLocation={showOnMap} />}
+        {activeView === 'MAP' && <section className="h-[520px]">            <MapView
               alerts={alerts}
               sosRequests={mySOSList}
               shelters={shelters}
@@ -428,15 +427,9 @@ export default function CitizenDashboard() {
               focusCoords={focusCoords}
               onConfirmHazard={handleConfirmHazard}
               userRole="CITIZEN"
-            />
-          </div>
-
-          {/* Side Dock: Safety Status, Shelter Finder & Protocol */}
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            {/* Mark Myself Safe Broadcast & Relative Safety Lookup */}
-            <SafetyStatusWidget />
-
-            {/* My Claimed Relief Supplies Log (Anti-Hoarding Personal Ledger) */}
+            /></section>}
+        {activeView === 'SHELTERS' && <section className="max-w-4xl w-full"><ShelterList shelters={shelters} userCoords={userCoords} onSelectShelter={shelter => showOnMap([shelter.lat, shelter.lng])} onShelterUpdated={handleShelterUpdated} /></section>}
+        {activeView === 'SAFETY' && <section className="grid grid-cols-1 md:grid-cols-2 gap-4"><SafetyStatusWidget />            {/* My Claimed Relief Supplies Log (Anti-Hoarding Personal Ledger) */}
             <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-3 text-xs space-y-2.5">
               <div className="flex items-center justify-between border-b border-[#D8D3C7] pb-2">
                 <div className="flex items-center gap-1.5 font-display font-bold uppercase text-[#14231F]">
@@ -456,6 +449,7 @@ export default function CitizenDashboard() {
                 </button>
               </div>
 
+              {pickupError && <p role="alert" className="text-red-700">{pickupError} <button onClick={fetchMyPickups} className="underline">Retry pickup history</button></p>}
               {loadingPickups ? (
                 <div className="p-3 text-center text-[11px] font-mono text-[#14231F]/60">
                   Loading personal pickup history...
@@ -468,7 +462,6 @@ export default function CitizenDashboard() {
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                   {myPickups.map((p) => {
                     const pickupTime = new Date(p.distributedAt).getTime();
-                    const now = Date.now();
                     const hoursSince = (now - pickupTime) / (1000 * 60 * 60);
                     const isCooldownActive = hoursSince < 12;
                     const nextEligibleDate = new Date(pickupTime + 12 * 60 * 60 * 1000);
@@ -516,29 +509,16 @@ export default function CitizenDashboard() {
               )}
             </div>
 
-            <div className="flex-1">
-              <ShelterList
-                shelters={shelters}
-                userCoords={userCoords}
-                onSelectShelter={(shelter) => setFocusCoords([shelter.lat, shelter.lng])}
-                onShelterUpdated={handleShelterUpdated}
-              />
-            </div>
+<div className="col-span-full">        {/* Nearby Peer-Confirmation Prompt (Amber/Grey hazard verification) */}
+        <HazardConfirmationPrompt
+          reports={hazardReports}
+          userCoords={userCoords}
+          onConfirmed={(updated) =>
+            setHazardReports((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+          }
+        />
 
-            {/* Quick Emergency Protocol Guidelines */}
-            <div className="p-3 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs space-y-2">
-              <h4 className="font-display font-bold uppercase text-[#14231F] flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-[#C97A2B]" />
-                Emergency Safety Rules
-              </h4>
-              <ul className="list-disc pl-4 space-y-1 text-[#14231F]/80 font-mono text-[11px]">
-                <li>Avoid floodwater; 15cm of fast-flowing water can knock you down.</li>
-                <li>Stay off powerlines and flooded electrical switchboards.</li>
-                <li>Verify ground hazards to help emergency teams route relief.</li>
-              </ul>
-            </div>
-          </div>
-        </div>
+</div></section>}
       </div>
 
       {/* Hazard Report In-App Camera Modal */}
@@ -550,7 +530,7 @@ export default function CitizenDashboard() {
       />
 
       {/* Supply Pickup QR Scanner Modal */}
-      <SupplyScanner
+      {supplyScannerOpen&&<Suspense fallback={<p role="status">Loading pickup scanner…</p>}><SupplyScanner
         isOpen={supplyScannerOpen}
         onClose={() => setSupplyScannerOpen(false)}
         user={user}
@@ -558,7 +538,7 @@ export default function CitizenDashboard() {
           fetchMyPickups();
           fetchData();
         }}
-      />
+      /></Suspense>}
 
       {/* Simulated Offline Relay & SMS Gateway Drawer */}
       <OfflineSimulationDrawer onDataChanged={fetchData} />

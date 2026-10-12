@@ -4,7 +4,7 @@ import api from '../services/api';
 import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 
 export default function HazardReportModal({ isOpen, onClose, onReportCreated, defaultCoords }) {
-  const [coords, setCoords] = useState(defaultCoords || { lat: 20.5937, lng: 78.9629 });
+  const [coords, setCoords] = useState(defaultCoords || { lat: '', lng: '' });
   const [hazardNote, setHazardNote] = useState('');
   const [severityBenchmark, setSeverityBenchmark] = useState('');
   const [photoBase64, setPhotoBase64] = useState(null);
@@ -27,7 +27,7 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
 
   if (!isOpen) return null;
 
-  const acquireLocation = () => {
+  function acquireLocation() {
     if (!navigator.geolocation) return;
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
@@ -38,22 +38,28 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
       () => setLocating(false),
       { timeout: 8000 }
     );
-  };
+  }
 
-  const handlePhotoCapture = (e) => {
+  const handlePhotoCapture = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    // Convert captured image to base64 string
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setPhotoBase64(reader.result);
-    };
-    reader.readAsDataURL(file);
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 12 * 1024 * 1024) { alert('Select a JPEG, PNG or WebP image under 12 MB'); return; }
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = url; });
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 800 / Math.max(image.width, image.height));
+      canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale);
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      setPhotoBase64(canvas.toDataURL('image/jpeg', 0.65));
+    } catch { alert('Could not read this image. Please try another photo.'); }
+    finally { URL.revokeObjectURL(url); e.target.value = ''; }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (coords.lat === '' || coords.lng === '' || !Number.isFinite(Number(coords.lat)) || !Number.isFinite(Number(coords.lng)) || Math.abs(Number(coords.lat)) > 90 || Math.abs(Number(coords.lng)) > 180) { alert('Provide the hazard location using GPS or latitude and longitude.'); return; }
     if (!severityBenchmark) {
       alert('Please select a water-depth / severity benchmark.');
       return;
@@ -67,8 +73,8 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
     setIsQueuedOffline(false);
 
     const payload = {
-      lat: coords.lat,
-      lng: coords.lng,
+      lat: Number(coords.lat),
+      lng: Number(coords.lng),
       hazardNote: hazardNote.trim(),
       severityBenchmark,
       photoUrl: photoBase64,
@@ -98,6 +104,9 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
         return;
       } catch (qErr) {
         console.error('Failed to queue offline hazard report:', qErr);
+        alert(qErr.message || 'Could not save this report. Free device storage and try again.');
+        setSubmitting(false);
+        return;
       } finally {
         setSubmitting(false);
       }
@@ -116,6 +125,10 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
         onClose();
       }, 1600);
     } catch (err) {
+      if (err.response) {
+        alert(err.response.data?.error || 'The server rejected this action. Please review it and try again.');
+        return;
+      }
       console.warn('Live hazard report failed, falling back to local IndexedDB queue:', err);
       try {
         await enqueueAction({
@@ -134,6 +147,7 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
           onClose();
         }, 2000);
       } catch (queueErr) {
+        console.error(queueErr.message);
         alert(err.response?.data?.error || 'Failed to submit hazard report');
       }
     } finally {
@@ -305,7 +319,7 @@ export default function HazardReportModal({ isOpen, onClose, onReportCreated, de
                 </button>
               </div>
               <div className="font-mono tabular-nums text-sm font-semibold text-[#14231F]">
-                {coords.lat.toFixed(4)}° N, {coords.lng.toFixed(4)}° E
+                <div className="grid grid-cols-2 gap-2"><label>Latitude<input aria-label="Hazard latitude" type="number" step="any" min="-90" max="90" required value={coords.lat} onChange={e => setCoords(prev => ({ ...prev, lat: e.target.value }))} className="w-full border rounded p-1" /></label><label>Longitude<input aria-label="Hazard longitude" type="number" step="any" min="-180" max="180" required value={coords.lng} onChange={e => setCoords(prev => ({ ...prev, lng: e.target.value }))} className="w-full border rounded p-1" /></label></div>
               </div>
             </div>
 

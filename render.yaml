@@ -3,18 +3,15 @@ services:
     name: sih-206-backend
     runtime: node
     rootDir: backend
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     # NOTE ON DATABASE PERSISTENCE:
     # SQLite requires a persistent disk volume on Render (supported on Starter/Standard tiers).
     # Mounting the database to /var/data ensures shelters, alerts, SOS requests, and users
     # persist across manual restarts, redeployments, and container restarts.
     #
-    # LIMITATION ON FREE TIER:
-    # Render's free tier does not support persistent disks (ephemeral filesystem only).
-    # If running on the free tier without a disk, database state resets upon service sleep/restart.
-    # In that environment, run 'node backend/scripts/seed-uttarakhand-demo.js' to re-populate demo data,
-    # or point DATABASE_URL to a managed PostgreSQL instance and update schema.prisma accordingly.
+    # Initialize durable storage with reviewed migrations before startup.
+    # Never seed/reset real data on service restart; see docs/deployment_guide.md.
     disk:
       name: sih-data
       mountPath: /var/data
@@ -25,7 +22,7 @@ services:
       - key: DATABASE_URL
         value: file:/var/data/dev.db
       - key: JWT_SECRET
-        value: 0f62d848616b64ca89624e004c7266f6f152f2940eaa280842fddc6b8220c221
+        generateValue: true
       - key: CORS_ORIGIN
         value: https://sih-206.vercel.app
       - key: PORT

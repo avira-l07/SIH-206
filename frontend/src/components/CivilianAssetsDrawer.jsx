@@ -1,6 +1,8 @@
+import { useSocket } from '../context/SocketContext';
 import React, { useState, useEffect } from 'react';
-import { Truck, Anchor, Zap, Stethoscope, Radio, Phone, Plus, CheckCircle, X, MapPin } from 'lucide-react';
+import { Truck, Anchor, Zap, Stethoscope, Radio, Phone, Plus, X, MapPin } from 'lucide-react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const TYPE_ICONS = {
   BOAT: Anchor,
@@ -11,6 +13,9 @@ const TYPE_ICONS = {
 };
 
 export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation }) {
+  const { user } = useAuth();
+  const { socket } = useSocket();
+  const [loadError, setLoadError] = useState('');
   const [assets, setAssets] = useState([]);
   const [filterType, setFilterType] = useState('ALL');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -20,23 +25,38 @@ export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation
     type: 'BOAT',
     title: '',
     description: '',
-    lat: 19.0760,
-    lng: 72.8777,
+    lat: user?.lat ?? '',
+    lng: user?.lng ?? '',
   });
   const [submitting, setSubmitting] = useState(false);
+  const [updatingAssetId, setUpdatingAssetId] = useState(null);
 
   const loadAssets = async () => {
+    setLoadError('');
     try {
       const res = await api.get('/assets');
       setAssets(res.data.assets || []);
     } catch (err) {
-      console.error('Failed to load civilian assets', err);
+      setLoadError(err.response?.data?.error || 'Could not load records. Please retry.');
     }
   };
 
   useEffect(() => {
-    if (isOpen) loadAssets();
-  }, [isOpen]);
+    if (!isOpen) return;
+    loadAssets();
+    socket?.on('asset:changed', loadAssets);
+    socket?.on('connect', loadAssets);
+    return () => { socket?.off('asset:changed', loadAssets); socket?.off('connect', loadAssets); };
+  }, [isOpen, socket]);
+
+  const toggleAvailability = async asset => {
+    setUpdatingAssetId(asset.id);
+    try {
+      const { data } = await api.patch(`/assets/${asset.id}/status`, { available: !asset.available });
+      setAssets(previous => previous.map(item => item.id === asset.id ? { ...item, ...data.asset } : item));
+    } catch (error) { alert(error.response?.data?.error || 'Could not change availability'); }
+    finally { setUpdatingAssetId(null); }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -47,7 +67,7 @@ export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation
         lat: parseFloat(form.lat),
         lng: parseFloat(form.lng),
       });
-      setAssets((prev) => [res.data.asset, ...prev]);
+      setAssets((prev) => [res.data.asset, ...prev.filter(a => a.id !== res.data.asset.id)]);
       setShowAddForm(false);
       setForm({
         ownerName: '',
@@ -55,8 +75,8 @@ export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation
         type: 'BOAT',
         title: '',
         description: '',
-        lat: 19.0760,
-        lng: 72.8777,
+        lat: user?.lat ?? '',
+        lng: user?.lng ?? '',
       });
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to register civilian resource');
@@ -76,7 +96,8 @@ export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation
       className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs"
     >
       <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded max-w-2xl w-full p-5 shadow-2xl text-[#14231F] flex flex-col max-h-[90vh]">
-        {/* Header */}
+  {loadError && <p role="alert" className="p-3 text-red-700">{loadError} <button className="underline" onClick={loadAssets}>Retry</button></p>}
+      {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-[#D8D3C7]">
           <div className="flex items-center gap-2">
             <Truck className="w-5 h-5 text-[#2E6E4E]" />
@@ -91,6 +112,7 @@ export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation
           </div>
           <button
             onClick={onClose}
+            aria-label="Close resource pool"
             className="p-1 bg-[#EFECE4] rounded text-xs hover:bg-[#D8D3C7]"
           >
             <X className="w-4 h-4" />
@@ -191,6 +213,10 @@ export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation
               />
             </div>
 
+            <div className="grid grid-cols-2 gap-2">
+              <div><label htmlFor="asset-latitude" className="block text-[10px] font-mono font-bold mb-0.5">Resource Latitude</label><input id="asset-latitude" type="number" step="any" min="-90" max="90" required value={form.lat} onChange={e => setForm({ ...form, lat: e.target.value })} className="w-full p-1.5 bg-white border border-[#D8D3C7] rounded text-xs" /></div>
+              <div><label htmlFor="asset-longitude" className="block text-[10px] font-mono font-bold mb-0.5">Resource Longitude</label><input id="asset-longitude" type="number" step="any" min="-180" max="180" required value={form.lng} onChange={e => setForm({ ...form, lng: e.target.value })} className="w-full p-1.5 bg-white border border-[#D8D3C7] rounded text-xs" /></div>
+            </div>
             <button
               type="submit"
               disabled={submitting}
@@ -234,8 +260,9 @@ export default function CivilianAssetsDrawer({ isOpen, onClose, onSelectLocation
 
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                     <span className="font-mono text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#2E6E4E]/15 text-[#2E6E4E] border border-[#2E6E4E]/30">
-                      ● READY TO MOBILIZE
+                      {asset.available ? '● READY TO MOBILIZE' : '○ UNAVAILABLE'}
                     </span>
+                    {(asset.userId === user?.id || user?.role === 'ADMIN') && <button type="button" disabled={updatingAssetId === asset.id} className="text-xs underline disabled:opacity-50" onClick={() => toggleAvailability(asset)}>{updatingAssetId === asset.id ? 'Saving…' : asset.available ? 'Mark unavailable' : 'Mark available'}</button>}
                     <div className="flex items-center gap-1">
                       {onSelectLocation && (
                         <button

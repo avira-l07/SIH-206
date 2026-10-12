@@ -1,4 +1,5 @@
-const prisma = require('../db');
+const { transaction } = require('./transaction.service');
+const { recordNotice } = require('./activity.service');
 
 /**
  * Evaluates weather and simulated environmental sensor telemetry against hazard thresholds.
@@ -90,7 +91,7 @@ function evaluateRisk(telemetry = {}) {
 /**
  * Automates hazard detection and alert generation into the database.
  */
-async function processTelemetryAndAlert(telemetry, region, lat, lng) {
+async function processTelemetryAndAlert(telemetry, region, lat, lng, evidence = {sourceKind:'DEMO'}) {
   const assessment = evaluateRisk(telemetry);
 
   if (assessment.severity === 'SAFE' || !assessment.hazardType) {
@@ -98,16 +99,23 @@ async function processTelemetryAndAlert(telemetry, region, lat, lng) {
   }
 
   // Auto-generate official hazard alert
-  const alert = await prisma.alert.create({
+  const alert = await transaction(async tx => {
+  const created = await tx.alert.create({
     data: {
       hazardType: assessment.hazardType,
       severity: assessment.severity,
       region: region || 'Active Region',
-      lat: lat || 19.0760,
-      lng: lng || 72.8777,
+      lat: lat ?? 19.0760,
+      lng: lng ?? 72.8777,
       message: assessment.reason,
       active: true,
+      sourceKind:evidence.sourceKind, observedAt:new Date(), evidence:JSON.stringify({telemetry,interpretation:'Rule threshold assessment, not forecast probability'}),
     },
+  });
+
+  await require('./delivery.service').enqueue(tx, created);
+  await recordNotice(tx, 'ALERT', `${created.region}: ${created.message}`);
+  return created;
   });
 
   return { assessment, alert };

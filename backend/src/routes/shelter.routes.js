@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+router.param('id', require('../middleware/request.middleware').validateId);
 const shelterController = require('../controllers/shelter.controller');
 const { authenticateToken, requireRole } = require('../middleware/auth.middleware');
 

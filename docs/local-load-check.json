@@ -1,0 +1,9 @@
+{
+  "environment": "Disposable SQLite database, local loopback, 60 simultaneous reads; not a field benchmark",
+  "requests": 60,
+  "failures": 0,
+  "elapsedMs": 140,
+  "medianMs": 131,
+  "p90Ms": 132,
+  "requestsPerSecond": 429
+}

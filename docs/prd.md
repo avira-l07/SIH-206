@@ -1,4 +1,6 @@
-# PRD - SIH26206: AI/IoT-Powered Disaster Management Platform
+# PRD - SIH26206: Disaster Management Student Innovation
+
+This historical design describes goals. For implemented workflows, configuration requirements and remaining field validation, use [GAP_UPGRADE.md](GAP_UPGRADE.md). AI/IoT was an architectural proposal, not a verified mandatory requirement of SIH26206.
 
 ## 1. What to Build
 A web application that centralizes disaster preparedness and response for citizens, rescue teams, and government agencies. Core idea: one dashboard that collects data (weather/GIS/crowdsourced/sensor), evaluates risk via deterministic thresholds, alerts people in real time, coordinates resources during a disaster, and **verifies ground-truth data so responders can trust it under chaotic, low-connectivity conditions.**

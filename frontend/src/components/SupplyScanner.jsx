@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Camera, X, CheckCircle2, AlertTriangle, Package, Loader2, ArrowRight, Keyboard, Clock, RefreshCw } from 'lucide-react';
+import { Camera, X, CheckCircle2, AlertTriangle, Loader2, ArrowRight, Keyboard, Clock, RefreshCw } from 'lucide-react';
 import api from '../services/api';
-import { enqueueAction } from '../services/offlineQueue';
+import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 
 export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
   const [scannedResult, setScannedResult] = useState(null);
@@ -14,6 +14,10 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
 
   const html5QrCodeRef = useRef(null);
   const isProcessingRef = useRef(false);
+
+  const cameraTimerRef = useRef(null);
+  const cameraGeneration = useRef(0);
+  const scanCallbackRef = useRef(null);
 
   // Initialize and clean up camera scanner
   useEffect(() => {
@@ -32,11 +36,13 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
     };
   }, [isOpen]);
 
-  const startCamera = async () => {
+  async function startCamera() {
     setCameraError(null);
     try {
       // Small timeout to allow DOM container to render
-      setTimeout(async () => {
+      const generation = ++cameraGeneration.current;
+      cameraTimerRef.current = setTimeout(async () => {
+        if (generation !== cameraGeneration.current) return;
         const readerElement = document.getElementById('qr-reader-container');
         if (!readerElement) return;
 
@@ -55,13 +61,14 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
             config,
             (decodedText) => {
               if (!isProcessingRef.current) {
-                handleCodeScanned(decodedText);
+                scanCallbackRef.current?.(decodedText);
               }
             },
             () => {
               // frame scanned without QR code - normal
             }
           );
+          if (generation !== cameraGeneration.current) { await qrCodeScanner.stop(); qrCodeScanner.clear(); return; }
           setCameraActive(true);
         } catch (err) {
           console.warn('Camera start warning (using manual fallback):', err);
@@ -69,12 +76,14 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
           setCameraActive(false);
         }
       }, 250);
-    } catch (err) {
+    } catch {
       setCameraError('Could not initialize camera scanner.');
     }
-  };
+  }
 
-  const stopCamera = async () => {
+  async function stopCamera() {
+    clearTimeout(cameraTimerRef.current);
+    cameraGeneration.current++;
     if (html5QrCodeRef.current) {
       try {
         if (html5QrCodeRef.current.isScanning) {
@@ -87,10 +96,10 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
       html5QrCodeRef.current = null;
     }
     setCameraActive(false);
-  };
+  }
 
   const handleCodeScanned = async (codeString) => {
-    if (!codeString || isProcessingRef.current) return;
+    if (!codeString || isProcessingRef.current || scannedResult) return;
     isProcessingRef.current = true;
     setLoading(true);
     setErrorMsg(null);
@@ -100,7 +109,7 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
 
     try {
       // Check if browser is offline
-      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      const isOffline = isManualOffline() || (typeof navigator !== 'undefined' && !navigator.onLine);
 
       if (isOffline) {
         // Enqueue to IndexedDB offline queue with idempotency protection (Decision 0.5)
@@ -116,10 +125,11 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
           },
         });
 
+        await stopCamera();
         setScannedResult({
           offlineQueued: true,
           itemName: trimmed.split(':')[3]?.replace(/-/g, ' ') || 'Relief Item',
-          message: 'Offline pickup logged in local secure storage. Will sync to shelter records when connection is restored.',
+          message: 'Pickup saved on this device. Stock and eligibility will be checked when it synchronizes.',
         });
         if (onSuccess) onSuccess();
       } else {
@@ -130,6 +140,7 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
           idempotencyKey,
         });
 
+        await stopCamera();
         setScannedResult(res.data);
         if (onSuccess) onSuccess(res.data.distribution);
       }
@@ -144,6 +155,8 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
       }, 1500);
     }
   };
+
+  useEffect(() => { scanCallbackRef.current = handleCodeScanned; });
 
   const handleManualSubmit = (e) => {
     e.preventDefault();
@@ -166,7 +179,7 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
               <h2 className="font-display font-bold text-sm uppercase tracking-tight">
                 Scan Supply Pickup
               </h2>
-              <p className="text-[10px] text-[#14231F]/60">Relief batch QR code authentication</p>
+              <p className="text-[10px] text-[#14231F]/60">Relief item identification and pickup eligibility</p>
             </div>
           </div>
           <button
@@ -186,9 +199,9 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
             {!cameraActive && (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-[#14231F]/90">
                 <Camera className="w-8 h-8 text-white/40 mb-2" />
-                <p className="text-xs text-white/80 font-bold">Camera Scan Ready</p>
+                <p className="text-xs text-white/80 font-bold">{scannedResult ? 'Scan complete' : cameraError ? 'Camera unavailable' : 'Starting camera…'}</p>
                 <p className="text-[10px] text-white/60 max-w-xs mt-1">
-                  {cameraError || 'Align the QR code printed on the relief crate or sign within the viewfinder.'}
+                  {scannedResult ? 'Close this dialog to finish.' : cameraError || 'Allow camera access, or enter the printed code below.'}
                 </p>
                 {cameraError && (
                   <button
@@ -216,14 +229,14 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
             <div className="p-3 bg-[#EBF7EE] border border-[#A3D9B1] rounded text-xs text-[#1E6B37] space-y-1.5 animate-fade-in">
               <div className="flex items-center gap-1.5 font-bold">
                 <CheckCircle2 className="w-4 h-4 text-[#1E6B37]" />
-                <span>Pickup Successfully Registered!</span>
+                <span>{scannedResult.offlineQueued ? 'Pickup saved, awaiting synchronization' : 'Pickup Successfully Registered!'}</span>
               </div>
               <p className="text-[11px] text-[#1E6B37]/90">
                 {scannedResult.message || `You collected 1 unit of ${scannedResult.distribution?.itemName || 'supplies'} from ${scannedResult.distribution?.shelter?.name || 'the shelter'}.`}
               </p>
               <div className="text-[10px] text-[#1E6B37]/70 pt-1 border-t border-[#A3D9B1]/50 flex justify-between">
-                <span>Personal Log Updated</span>
-                <span>Anti-Hoarding Cooldown Active (12h)</span>
+                <span>{scannedResult.offlineQueued ? 'Saved on this device' : 'Personal Log Updated'}</span>
+                <span>{scannedResult.offlineQueued ? 'Eligibility checked on sync' : 'Anti-Hoarding Cooldown Active (12h)'}</span>
               </div>
             </div>
           )}
@@ -255,7 +268,7 @@ export default function SupplyScanner({ isOpen, onClose, user, onSuccess }) {
               />
               <button
                 type="submit"
-                disabled={loading || !manualCode.trim()}
+                disabled={loading || Boolean(scannedResult) || !manualCode.trim()}
                 className="px-3 py-2 bg-[#14231F] hover:bg-black text-white text-xs font-bold rounded flex items-center gap-1 disabled:opacity-50 transition-colors shrink-0"
               >
                 <span>Claim</span>

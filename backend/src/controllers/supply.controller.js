@@ -1,4 +1,5 @@
 const prisma = require('../db');
+const { transaction } = require('../services/transaction.service');
 const { broadcastSupplyUpdated, broadcastSupplyDistributed } = require('../sockets/socketHandler');
 
 /**
@@ -10,13 +11,18 @@ async function logSupplyDeltaInternal({
   deltaFulfilled = 0,
   deltaNeeded = 0,
   idempotencyKey = null,
-}) {
+}, db = null) {
+  if (!db) {
+    const result = await transaction(tx => logSupplyDeltaInternal({ supplyRequestId, deltaFulfilled, deltaNeeded, idempotencyKey }, tx));
+    broadcastSupplyUpdated(result);
+    return result;
+  }
   const parsedId = parseInt(supplyRequestId);
   if (isNaN(parsedId)) {
     throw new Error('Valid supplyRequestId is required');
   }
 
-  const existing = await prisma.supplyRequest.findUnique({
+  const existing = await db.supplyRequest.findUnique({
     where: { id: parsedId },
     include: { shelter: true },
   });
@@ -39,7 +45,7 @@ async function logSupplyDeltaInternal({
       ? 'LOW'
       : 'OK';
 
-  const updated = await prisma.supplyRequest.update({
+  const updated = await db.supplyRequest.update({
     where: { id: parsedId },
     data: {
       quantityFulfilled: newFulfilled,
@@ -55,7 +61,7 @@ async function logSupplyDeltaInternal({
   const remainingDeficit = Math.max(0, updated.quantityNeeded - updated.quantityFulfilled);
 
   // Broadcast real-time stock change
-  broadcastSupplyUpdated({ supply: updated, remainingDeficit });
+
 
   return { supply: updated, remainingDeficit };
 }
@@ -95,7 +101,7 @@ async function getSupplies(req, res) {
     res.status(200).json({ supplies: itemsWithGap });
   } catch (error) {
     console.error('Error fetching supplies:', error);
-    res.status(500).json({ error: 'Failed to fetch supplies' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch supplies' });
   }
 }
 
@@ -129,10 +135,11 @@ async function upsertSupplyItem(req, res) {
       },
     });
 
+    broadcastSupplyUpdated({ supply, remainingDeficit: Math.max(0, supply.quantityNeeded - supply.quantityFulfilled) });
     res.status(201).json({ message: 'Supply request recorded', supply });
   } catch (error) {
     console.error('Error recording supply item:', error);
-    res.status(500).json({ error: 'Failed to record supply item' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to record supply item' });
   }
 }
 
@@ -144,27 +151,22 @@ async function updateSupplyStock(req, res) {
     const { id } = req.params;
     const { quantityFulfilled, quantityNeeded } = req.body;
 
-    const existing = await prisma.supplyRequest.findUnique({ where: { id: parseInt(id) } });
-    if (!existing) {
-      return res.status(404).json({ error: 'Supply item not found' });
-    }
-
-    const targetFulfilled = typeof quantityFulfilled === 'number' ? quantityFulfilled : existing.quantityFulfilled;
-    const targetNeeded = typeof quantityNeeded === 'number' ? quantityNeeded : existing.quantityNeeded;
-
-    const deltaFulfilled = targetFulfilled - existing.quantityFulfilled;
-    const deltaNeeded = targetNeeded - existing.quantityNeeded;
-
-    const { supply: updated, remainingDeficit } = await logSupplyDeltaInternal({
-      supplyRequestId: existing.id,
-      deltaFulfilled,
-      deltaNeeded,
+    const result = await transaction(async tx => {
+      const existing = await tx.supplyRequest.findUnique({ where: { id: Number(id) } });
+      if (!existing) throw Object.assign(new Error('Supply item not found'), { status: 404 });
+      return logSupplyDeltaInternal({
+        supplyRequestId: existing.id,
+        deltaFulfilled: (quantityFulfilled ?? existing.quantityFulfilled) - existing.quantityFulfilled,
+        deltaNeeded: (quantityNeeded ?? existing.quantityNeeded) - existing.quantityNeeded,
+      }, tx);
     });
+    const { supply: updated, remainingDeficit } = result;
+    broadcastSupplyUpdated(result);
 
     res.status(200).json({ message: 'Stock updated', supply: updated, remainingDeficit });
   } catch (error) {
     console.error('Error updating stock:', error);
-    res.status(500).json({ error: 'Failed to update stock' });
+    res.status(error.status || (error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500)).json({ error: 'Failed to update stock' });
   }
 }
 
@@ -201,7 +203,13 @@ async function logSupplyShipment(req, res) {
       if (match) targetRequestId = match.id;
     }
 
-    const shipment = await prisma.supplyShipment.create({
+    if (targetRequestId) {
+      const target = await prisma.supplyRequest.findUnique({ where: { id: targetRequestId } });
+      if (!target || target.shelterId !== parsedShelterId || target.itemName !== trimmedItemName) return res.status(400).json({ error: 'Supply request must match the shelter and item' });
+    }
+    if (qVerified > qClaimed) return res.status(400).json({ error: 'Verified quantity cannot exceed claimed quantity' });
+    const shipmentResult = await transaction(async tx => {
+    const shipment = await tx.supplyShipment.create({
       data: {
         shelterId: parsedShelterId,
         supplyRequestId: targetRequestId,
@@ -219,11 +227,15 @@ async function logSupplyShipment(req, res) {
       const result = await logSupplyDeltaInternal({
         supplyRequestId: targetRequestId,
         deltaFulfilled: qVerified,
-      });
+      }, tx);
       updatedSupplyRequest = result.supply;
       remainingDeficit = result.remainingDeficit;
     }
 
+    return { shipment, updatedSupplyRequest, remainingDeficit };
+    });
+    const { shipment, updatedSupplyRequest, remainingDeficit } = shipmentResult;
+    if (updatedSupplyRequest) broadcastSupplyUpdated({ supply: updatedSupplyRequest, remainingDeficit });
     res.status(201).json({
       message: 'Supply shipment verified and logged',
       shipment,
@@ -232,7 +244,7 @@ async function logSupplyShipment(req, res) {
     });
   } catch (error) {
     console.error('Error logging supply shipment:', error);
-    res.status(500).json({ error: 'Failed to log supply shipment' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to log supply shipment' });
   }
 }
 
@@ -257,7 +269,7 @@ async function getSupplyShipments(req, res) {
     res.status(200).json({ shipments });
   } catch (error) {
     console.error('Error fetching supply shipments:', error);
-    res.status(500).json({ error: 'Failed to fetch supply shipments' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch supply shipments' });
   }
 }
 
@@ -291,7 +303,7 @@ async function generateSupplyCode(req, res) {
     });
   } catch (error) {
     console.error('Error generating supply code:', error);
-    res.status(500).json({ error: 'Failed to generate supply code' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to generate supply code' });
   }
 }
 
@@ -305,6 +317,7 @@ async function recordSupplyDistributionInternal({
   quantity = 1,
   idempotencyKey = null,
   queuedAt = null,
+  syncLog = null,
 }) {
   if (!citizenId) {
     const err = new Error('Authentication required to claim relief supplies');
@@ -328,7 +341,7 @@ async function recordSupplyDistributionInternal({
   const trimmedCode = scannedCode.trim();
   const parts = trimmedCode.split(':');
 
-  if (parts.length < 3 || parts[0].toUpperCase() !== 'SUPPLY') {
+  if (parts.length !== 4 || parts[0].toUpperCase() !== 'SUPPLY') {
     const err = new Error('Invalid supply QR code format. Expected format: SUPPLY:<shelterId>:<supplyRequestId>:<itemSlug>');
     err.status = 400;
     throw err;
@@ -337,14 +350,16 @@ async function recordSupplyDistributionInternal({
   const shelterId = parseInt(parts[1]);
   const supplyRequestId = parseInt(parts[2]);
 
-  if (isNaN(shelterId) || isNaN(supplyRequestId)) {
+  if (!/^\d+$/.test(parts[1]) || !/^\d+$/.test(parts[2]) || !Number.isSafeInteger(shelterId) || !Number.isSafeInteger(supplyRequestId) || shelterId <= 0 || supplyRequestId <= 0) {
     const err = new Error('Malformed shelter ID or supply ID in QR code');
     err.status = 400;
     throw err;
   }
 
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10) throw Object.assign(new Error('Pickup quantity must be an integer between 1 and 10'), { status: 400 });
+  const result = await transaction(async tx => {
   if (idempotencyKey) {
-    const existingDist = await prisma.supplyDistribution.findUnique({
+    const existingDist = await tx.supplyDistribution.findUnique({
       where: { idempotencyKey },
       include: {
         shelter: { select: { id: true, name: true, address: true } },
@@ -352,6 +367,7 @@ async function recordSupplyDistributionInternal({
       },
     });
     if (existingDist) {
+      if (existingDist.citizenId !== citizenId) { const error = new Error('Idempotency key belongs to another account'); error.status = 409; throw error; }
       return {
         distribution: existingDist,
         duplicateIgnored: true,
@@ -359,7 +375,7 @@ async function recordSupplyDistributionInternal({
     }
   }
 
-  const supplyRequest = await prisma.supplyRequest.findFirst({
+  const supplyRequest = await tx.supplyRequest.findFirst({
     where: {
       id: supplyRequestId,
       shelterId: shelterId,
@@ -373,10 +389,12 @@ async function recordSupplyDistributionInternal({
     throw err;
   }
 
+  const expectedSlug = supplyRequest.itemName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  if (parts[3] !== expectedSlug) throw Object.assign(new Error('Supply code does not match this item'), { status: 400 });
   const COOLDOWN_HOURS = 12;
   const cooldownThreshold = new Date(Date.now() - COOLDOWN_HOURS * 60 * 60 * 1000);
 
-  const recentPickup = await prisma.supplyDistribution.findFirst({
+  const recentPickup = await tx.supplyDistribution.findFirst({
     where: {
       citizenId,
       supplyRequestId,
@@ -402,16 +420,17 @@ async function recordSupplyDistributionInternal({
 
   const pickupQty = Math.max(1, Math.min(10, parseInt(quantity) || 1));
 
+  if (supplyRequest.quantityFulfilled < pickupQty) { const error = new Error('Insufficient stock for this pickup'); error.status = 409; throw error; }
   const { supply: updatedSupply, remainingDeficit } = await logSupplyDeltaInternal({
     supplyRequestId,
     deltaFulfilled: -pickupQty,
     idempotencyKey,
-  });
+  }, tx);
 
   const finalIdempotencyKey =
     idempotencyKey || `dist_${citizenId}_${supplyRequestId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-  const distribution = await prisma.supplyDistribution.create({
+  const distribution = await tx.supplyDistribution.create({
     data: {
       citizenId,
       shelterId,
@@ -420,7 +439,7 @@ async function recordSupplyDistributionInternal({
       quantity: pickupQty,
       scannedCode: trimmedCode,
       idempotencyKey: finalIdempotencyKey,
-      distributedAt: queuedAt ? new Date(queuedAt) : new Date(),
+      distributedAt: new Date(),
     },
     include: {
       citizen: { select: { id: true, name: true, phone: true } },
@@ -429,6 +448,12 @@ async function recordSupplyDistributionInternal({
     },
   });
 
+  if (syncLog) await tx.offlineSyncLog.create({ data: syncLog });
+  return { distribution, supplyRequest, updatedSupply, remainingDeficit, duplicateIgnored: false };
+  });
+  if (result.duplicateIgnored) return result;
+  const { distribution, supplyRequest, updatedSupply, remainingDeficit } = result;
+  broadcastSupplyUpdated({ supply: updatedSupply, remainingDeficit });
   broadcastSupplyDistributed({
     distribution,
     supply: updatedSupply,
@@ -485,11 +510,11 @@ async function recordSupplyDistribution(req, res) {
         nextEligibleAt: error.nextEligibleAt,
       });
     }
-    if (error.status === 400 || error.status === 404 || error.status === 401) {
+    if (error.status === 400 || error.status === 404 || error.status === 401 || error.status === 409) {
       return res.status(error.status).json({ error: error.message });
     }
     console.error('Error recording supply distribution:', error);
-    res.status(500).json({ error: error.message || 'Failed to record supply distribution' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to record supply distribution' });
   }
 }
 
@@ -515,7 +540,7 @@ async function getMyDistributions(req, res) {
     res.status(200).json({ distributions });
   } catch (error) {
     console.error('Error fetching my distributions:', error);
-    res.status(500).json({ error: 'Failed to fetch distribution history' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch distribution history' });
   }
 }
 
@@ -541,7 +566,7 @@ async function getShelterDistributions(req, res) {
     res.status(200).json({ distributions });
   } catch (error) {
     console.error('Error fetching shelter distributions:', error);
-    res.status(500).json({ error: 'Failed to fetch shelter distributions' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch shelter distributions' });
   }
 }
 

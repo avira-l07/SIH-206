@@ -1,4 +1,6 @@
 const prisma = require('../db');
+const { transaction } = require('../services/transaction.service');
+const { recordNotice } = require('../services/activity.service');
 const { broadcastAlert, broadcastAlertDeactivated, broadcastAlertDeleted } = require('../sockets/socketHandler');
 const { processTelemetryAndAlert, evaluateRisk } = require('../services/riskEngine.service');
 const { getWeatherData } = require('../services/weather.service');
@@ -17,6 +19,7 @@ function isRegionMatch(subscriberRegion, alertRegion) {
     return true;
   }
   if (!alertRegion) return true;
+  if (['all', 'all regions', 'all regions (national/statewide)', 'national', 'statewide'].includes(alertRegion.trim().toLowerCase())) return true;
   const alertStr = alertRegion.trim().toLowerCase();
 
   // Exact match
@@ -75,109 +78,8 @@ function calculateHaversineKm(lat1, lon1, lat2, lon2) {
  * Normalizes phone numbers to E.164 and deduplicates.
  */
 async function fanOutPublicAlerts(alert, explicitPhones = []) {
-  try {
-    const alertRegion = alert.region ? alert.region.trim() : null;
-    const alertRadius = alert.radiusKm !== undefined && alert.radiusKm !== null ? Number(alert.radiusKm) : 5.0;
-    const hasAlertCoords = typeof alert.lat === 'number' && typeof alert.lng === 'number';
-
-    // Concurrently fetch:
-    // 1. Phone registrations from public no-login registry
-    // 2. Registered citizen users with phone numbers from User table (including coordinates and region)
-    // 3. Web Push browser subscriptions
-    const [allPhoneRecords, allCitizenUsers, allPushSubs] = await Promise.all([
-      prisma.phoneRegistration.findMany(),
-      prisma.user.findMany({
-        where: { role: 'CITIZEN', phone: { not: null } },
-        select: { id: true, name: true, phone: true, region: true, lat: true, lng: true },
-      }),
-      prisma.pushSubscription.findMany(),
-    ]);
-
-    const recipientPhoneSet = new Set();
-
-    // 1. Filter and normalize phone numbers from PhoneRegistration (region-string matching)
-    for (const record of allPhoneRecords) {
-      if (isRegionMatch(record.region, alertRegion)) {
-        const normalized = normalizePhoneNumber(record.phoneNumber);
-        if (normalized) recipientPhoneSet.add(normalized);
-      }
-    }
-
-    // 2. Filter registered citizens from User table:
-    // - For citizens with lat/lng: match via Haversine distance against alert.radiusKm
-    // - For citizens without lat/lng (declined permission/older account): fall back to region matching
-    for (const citizen of allCitizenUsers) {
-      let isMatch = false;
-      const hasCitizenCoords = typeof citizen.lat === 'number' && typeof citizen.lng === 'number';
-
-      if (hasAlertCoords && hasCitizenCoords) {
-        const distKm = calculateHaversineKm(alert.lat, alert.lng, citizen.lat, citizen.lng);
-        if (distKm <= alertRadius) {
-          isMatch = true;
-        }
-      } else {
-        // Fallback to region matching
-        if (isRegionMatch(citizen.region, alertRegion)) {
-          isMatch = true;
-        }
-      }
-
-      if (isMatch && citizen.phone) {
-        const normalized = normalizePhoneNumber(citizen.phone);
-        if (normalized) recipientPhoneSet.add(normalized);
-      }
-    }
-
-    // 3. Include any explicitly targeted numbers requested by administrator
-    if (Array.isArray(explicitPhones)) {
-      for (const raw of explicitPhones) {
-        const normalized = normalizePhoneNumber(raw);
-        if (normalized) recipientPhoneSet.add(normalized);
-      }
-    }
-
-    const uniquePhoneNumbers = Array.from(recipientPhoneSet);
-
-    // 4. Filter Web Push subscriptions
-    const matchingPushSubs = allPushSubs.filter((sub) =>
-      isRegionMatch(sub.region, alertRegion)
-    );
-
-    const smsMessage = `[SIH EMERGENCY ALERT] ${alert.severity}: ${alert.hazardType} in ${alert.region} (${alertRadius}km radius). ${alert.message}. Seek safe shelter.`;
-
-    const pushPayload = {
-      title: `EMERGENCY ALERT: ${alert.severity} ${alert.hazardType}`,
-      body: `${alert.region}: ${alert.message}`,
-      alertId: alert.id,
-      severity: alert.severity,
-      hazardType: alert.hazardType,
-      region: alert.region,
-      lat: alert.lat,
-      lng: alert.lng,
-      radiusKm: alertRadius,
-      url: '/',
-      timestamp: Date.now(),
-    };
-
-    console.log(
-      `[Alert Fanout] Alert #${alert.id} (${alert.severity} in ${alert.region}, r=${alertRadius}km) triggering public fan-out: ${uniquePhoneNumbers.length} SMS recipients (including registered citizens), ${matchingPushSubs.length} Web Push devices.`
-    );
-
-    // Concurrently fan out without blocking HTTP caller
-    const [smsResult, pushResult] = await Promise.allSettled([
-      sendBroadcastSMS(uniquePhoneNumbers, smsMessage),
-      sendPushBroadcast(matchingPushSubs, pushPayload),
-    ]);
-
-    return {
-      phoneCount: uniquePhoneNumbers.length,
-      pushCount: matchingPushSubs.length,
-      smsResult: smsResult.status === 'fulfilled' ? smsResult.value : null,
-      pushResult: pushResult.status === 'fulfilled' ? pushResult.value : null,
-    };
-  } catch (err) {
-    console.error(`[Alert Fanout] Error in public reach fan-out for Alert #${alert?.id}:`, err);
-  }
+  await transaction(tx => require('../services/delivery.service').enqueue(tx, alert, explicitPhones));
+  return {alertId:alert.id,queued:true};
 }
 
 async function getAlerts(req, res) {
@@ -192,10 +94,12 @@ async function getAlerts(req, res) {
       where,
       orderBy: { createdAt: 'desc' },
     });
-    res.status(200).json({ alerts });
+    const advisories=await prisma.evacuationAdvisory.findMany({where:{alertId:{in:alerts.map(a=>a.id)}},select:{alertId:true,active:true,expiresAt:true}});
+    const guidance=new Map(advisories.map(a=>[a.alertId,{active:a.active,expiresAt:a.expiresAt}]));
+    res.status(200).json({ alerts:alerts.filter(a=>activeOnly==='false'||!guidance.has(a.id)||(guidance.get(a.id).active&&guidance.get(a.id).expiresAt>new Date())).map(a=>({...a,...(guidance.has(a.id)?{evacuation:guidance.get(a.id)}:{})})) });
   } catch (error) {
     console.error('Error fetching alerts:', error);
-    res.status(500).json({ error: 'Failed to fetch alerts' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch alerts' });
   }
 }
 
@@ -226,7 +130,8 @@ async function createAlert(req, res) {
       }
     }
 
-    const alert = await prisma.alert.create({
+    const alert = await transaction(async tx => {
+    const created = await tx.alert.create({
       data: {
         hazardType: hazardType || 'ADVISORY',
         severity: severity || 'WATCH',
@@ -236,7 +141,13 @@ async function createAlert(req, res) {
         radiusKm: isNaN(parsedRadius) ? 15.0 : parsedRadius,
         message: message || 'Urgent public safety notice. Follow civil defense instructions.',
         active: true,
+        sourceKind:'MANUAL', observedAt:new Date(),
       },
+    });
+
+    await require('../services/delivery.service').enqueue(tx, created, [...(targetPhone ? [targetPhone] : []), ...(Array.isArray(targetPhones) ? targetPhones : [])]);
+    await recordNotice(tx, 'ALERT', `${created.region}: ${created.message}`);
+    return created;
     });
 
     // 1. Instant WebSocket broadcast to active app clients
@@ -255,25 +166,37 @@ async function createAlert(req, res) {
     res.status(201).json({ message: 'Alert created & broadcasted', alert });
   } catch (error) {
     console.error('Error creating alert:', error);
-    res.status(500).json({ error: 'Failed to create alert' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to create alert' });
   }
 }
 
 async function simulateWeatherAlert(req, res) {
   try {
-    const { region = 'Mumbai', customTelemetry } = req.body;
+    const { region = 'Mumbai', customTelemetry, telemetry: submittedTelemetry, lat, lng } = req.body;
 
     // Fetch either real weather or simulated scenario
-    let telemetry = customTelemetry;
+    let liveProvider=false;
+    let telemetry = customTelemetry || submittedTelemetry;
+    if (telemetry && (typeof telemetry !== 'object' || Array.isArray(telemetry))) return res.status(400).json({ error: 'Telemetry must be an object' });
+    if (telemetry) {
+      for (const key of ['rain1h', 'windSpeed', 'temp', 'humidity', 'seismic', 'smokeIndex', 'soilMoisture']) {
+        if (telemetry[key] !== undefined && (typeof telemetry[key] !== 'number' || !Number.isFinite(telemetry[key]))) return res.status(400).json({ error: 'Telemetry readings must be finite numbers' });
+      }
+      if (telemetry.condition != null && typeof telemetry.condition !== 'string') return res.status(400).json({ error: 'Telemetry condition must be text' });
+      if (telemetry.landslideRisk != null && typeof telemetry.landslideRisk !== 'boolean') return res.status(400).json({ error: 'landslideRisk must be a boolean' });
+      telemetry = { ...telemetry, lat: lat ?? telemetry.lat, lng: lng ?? telemetry.lng };
+      for (const [key, max] of [['lat', 90], ['lng', 180]]) if (telemetry[key] != null && (typeof telemetry[key] !== 'number' || !Number.isFinite(telemetry[key]) || Math.abs(telemetry[key]) > max)) return res.status(400).json({ error: 'Invalid telemetry coordinates' });
+    }
     if (!telemetry) {
-      telemetry = await getWeatherData(region);
+      telemetry = await getWeatherData(region); liveProvider=telemetry.isLive===true;
     }
 
+    telemetry={...telemetry,isLive:liveProvider};
     const { assessment, alert } = await processTelemetryAndAlert(
       telemetry,
       region,
       telemetry.lat,
-      telemetry.lng
+      telemetry.lng, {sourceKind:liveProvider ? 'LIVE_WEATHER' : 'DEMO'}
     );
 
     if (alert) {
@@ -285,13 +208,13 @@ async function simulateWeatherAlert(req, res) {
 
     res.status(200).json({
       message: alert ? 'Risk threshold triggered an automatic alert' : 'Telemetry analyzed; conditions normal',
-      assessment,
+      assessment: {...assessment,interpretation:'Rule severity score; not a probability'},
       alert,
       telemetry,
     });
   } catch (error) {
     console.error('Error simulating risk alert:', error);
-    res.status(500).json({ error: 'Failed to process risk simulation' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to process risk simulation' });
   }
 }
 
@@ -306,7 +229,7 @@ async function deactivateAlert(req, res) {
     res.status(200).json({ message: 'Alert deactivated', alert });
   } catch (error) {
     console.error('Error deactivating alert:', error);
-    res.status(500).json({ error: 'Failed to deactivate alert' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to deactivate alert' });
   }
 }
 
@@ -341,7 +264,7 @@ async function deleteAlert(req, res) {
     res.status(200).json({ message: 'Alert deleted (soft)', alertId });
   } catch (error) {
     console.error('Error deleting alert:', error);
-    res.status(500).json({ error: 'Failed to delete alert' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to delete alert' });
   }
 }
 
@@ -360,7 +283,7 @@ async function bulkDeleteResolved(req, res) {
     });
   } catch (error) {
     console.error('Error bulk-deleting resolved alerts:', error);
-    res.status(500).json({ error: 'Failed to bulk-delete resolved alerts' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to bulk-delete resolved alerts' });
   }
 }
 

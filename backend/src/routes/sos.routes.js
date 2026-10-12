@@ -1,25 +1,16 @@
 const express = require('express');
 const router = express.Router();
+router.param('id', require('../middleware/request.middleware').validateId);
 const sosController = require('../controllers/sos.controller');
 const { validateSOS } = require('../middleware/validate.middleware');
-const { authenticateToken, requireRole } = require('../middleware/auth.middleware');
+const { authenticateToken, requireRole, optionalAuth } = require('../middleware/auth.middleware');
 
-function optionalAuth(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return next();
 
-  const jwt = require('jsonwebtoken');
-  const { JWT_SECRET } = require('../middleware/auth.middleware');
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (!err) req.user = user;
-    next();
-  });
-}
 
 router.post('/', optionalAuth, validateSOS, sosController.createSOS);
 router.get('/', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), sosController.getSOSList);
 router.get('/my', authenticateToken, sosController.getMySOS);
+router.get('/:id/timeline', authenticateToken, sosController.getTimeline);
 
 // Admin-only verification (Decision 0.1)
 router.patch('/:id/verify', authenticateToken, requireRole(['ADMIN']), sosController.verifySOS);
@@ -42,4 +33,8 @@ router.patch('/:id/triage-tag', authenticateToken, requireRole(['VOLUNTEER', 'AD
 // Citizen verification loop (Sprint 2)
 router.patch('/:id/citizen-verify', authenticateToken, sosController.citizenVerifySOS);
 
+router.patch('/:id/withdraw', authenticateToken, sosController.withdrawSOS);
+router.patch('/:id/acknowledge', authenticateToken, requireRole(['VOLUNTEER', 'ADMIN']), sosController.acknowledgeSOS);
+router.patch('/:id/handoff', authenticateToken, requireRole(['VOLUNTEER', 'ADMIN']), sosController.requestHandoff);
+router.patch('/:id/reassign', authenticateToken, requireRole(['ADMIN']), sosController.reassignSOS);
 module.exports = router;

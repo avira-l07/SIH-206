@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+router.param('id', require('../middleware/request.middleware').validateId);
 const prisma = require('../db');
 
 router.get('/', async (req, res) => {
@@ -14,13 +15,11 @@ router.get('/', async (req, res) => {
     dbError = err.message;
   }
 
-  res.status(200).json({
-    status: 'ok',
+  res.status(dbStatus === 'healthy' ? 200 : 503).json({
+    status: dbStatus === 'healthy' ? 'ok' : 'unavailable',
     timestamp: new Date().toISOString(),
     database: {
       status: dbStatus,
-      userCount,
-      ...(dbError ? { error: dbError } : {}),
     },
     service: 'SIH26206 Disaster Management Backend API',
     version: '1.0.2',

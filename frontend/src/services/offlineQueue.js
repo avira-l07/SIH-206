@@ -1,5 +1,5 @@
 // SIH26206 Persistent Offline Queue using Native IndexedDB
-// Guarantees zero data loss for emergency SOS calls and hazard reports during cellular & grid blackouts
+// Saves pending reports on this device until the signed-in account can synchronize them.
 import api from './api';
 
 const DB_NAME = 'SIH_DISASTER_DB';
@@ -17,7 +17,7 @@ let isFlushing = false;
 function getDB() {
   if (dbPromise) return dbPromise;
 
-  dbPromise = new Promise((resolve, reject) => {
+  dbPromise = new Promise((resolve) => {
     if (typeof indexedDB === 'undefined') {
       console.warn('[OfflineQueue] IndexedDB not available in current environment');
       return resolve(null);
@@ -83,11 +83,18 @@ export function subscribeQueue(callback) {
 /**
  * Enqueue an emergency action into IndexedDB
  */
-export async function enqueueAction({ type, endpoint, payload }) {
+export async function enqueueAction({ type, endpoint, payload, idempotencyKey: suppliedKey }) {
   const db = await getDB();
-  const idempotencyKey = generateIdempotencyKey(type);
+  const idempotencyKey = suppliedKey || payload?.idempotencyKey || generateIdempotencyKey(type);
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(idempotencyKey)) throw new Error('Invalid saved action receipt');
+  const duplicate = (await getQueuedActions()).find(action => action.idempotencyKey === idempotencyKey);
+  if (duplicate) {
+    if (duplicate.type !== type || JSON.stringify(duplicate.payload) !== JSON.stringify(payload)) throw new Error('Saved receipt belongs to different details');
+    return duplicate;
+  }
   const record = {
     idempotencyKey,
+    ownerId: JSON.parse(localStorage.getItem('sih_user') || 'null')?.id || null,
     type,
     endpoint,
     payload,
@@ -99,13 +106,13 @@ export async function enqueueAction({ type, endpoint, payload }) {
     // Fallback to localStorage if IndexedDB is blocked
     try {
       const existing = JSON.parse(localStorage.getItem('sih_fallback_queue') || '[]');
-      record.id = Date.now();
+      record.id = idempotencyKey;
       existing.push(record);
       localStorage.setItem('sih_fallback_queue', JSON.stringify(existing));
       notifySubscribers();
       return record;
     } catch {
-      return record;
+      throw new Error('Could not save the action on this device. Free storage space and try again.');
     }
   }
 
@@ -116,8 +123,11 @@ export async function enqueueAction({ type, endpoint, payload }) {
 
     request.onsuccess = (e) => {
       record.id = e.target.result;
+
+    };
+    tx.onabort = tx.onerror = () => reject(tx.error || new Error('Device storage write failed'));
+    tx.oncomplete = () => {
       notifySubscribers();
-      console.log(`🛡️ [OfflineQueue] Enqueued ${type} with idempotency key: ${idempotencyKey}`);
       resolve(record);
     };
 
@@ -131,11 +141,16 @@ export async function enqueueAction({ type, endpoint, payload }) {
 /**
  * Retrieve all pending queued actions from IndexedDB
  */
+function visibleActions(actions) {
+  const userId = JSON.parse(localStorage.getItem('sih_user') || 'null')?.id || null;
+  return actions.filter(action => (action.ownerId || action.payload?.userId || null) === userId);
+}
+
 export async function getQueuedActions() {
   const db = await getDB();
   if (!db) {
     try {
-      return JSON.parse(localStorage.getItem('sih_fallback_queue') || '[]');
+      return visibleActions(JSON.parse(localStorage.getItem('sih_fallback_queue') || '[]'));
     } catch {
       return [];
     }
@@ -146,7 +161,7 @@ export async function getQueuedActions() {
     const store = tx.objectStore(STORE_NAME);
     const request = store.getAll();
 
-    request.onsuccess = () => resolve(request.result || []);
+    request.onsuccess = () => resolve(visibleActions(request.result || []));
     request.onerror = () => resolve([]);
   });
 }
@@ -177,13 +192,10 @@ export async function removeAction(id) {
   return new Promise((resolve) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    const request = store.delete(id);
+    store.delete(id);
 
-    request.onsuccess = () => {
-      notifySubscribers();
-      resolve(true);
-    };
-    request.onerror = () => resolve(false);
+    tx.oncomplete = () => { notifySubscribers(); resolve(true); };
+    tx.onerror = tx.onabort = () => resolve(false);
   });
 }
 
@@ -191,24 +203,8 @@ export async function removeAction(id) {
  * Clear all records from the queue
  */
 export async function clearQueue() {
-  const db = await getDB();
-  if (!db) {
-    localStorage.removeItem('sih_fallback_queue');
-    notifySubscribers();
-    return;
-  }
-
-  return new Promise((resolve) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    const request = store.clear();
-
-    request.onsuccess = () => {
-      notifySubscribers();
-      resolve(true);
-    };
-    request.onerror = () => resolve(false);
-  });
+  for (const action of await getQueuedActions()) await removeAction(action.id);
+  await notifySubscribers();
 }
 
 /**
@@ -225,6 +221,7 @@ export function setManualOffline(val) {
     localStorage.removeItem(MANUAL_OFFLINE_KEY);
   }
   notifySubscribers();
+  window.dispatchEvent(new CustomEvent('sih:connectivity-changed'));
 }
 
 /**
@@ -239,43 +236,36 @@ export async function flushQueue() {
     return { skipped: true, reason: 'Browser reports offline network interface' };
   }
 
-  const items = await getQueuedActions();
-  if (items.length === 0) return { itemsProcessed: 0 };
-
+  const sessionToken = localStorage.getItem('sih_auth_token');
+  const sessionOwner = localStorage.getItem('sih_user');
+  if (!sessionToken) return { skipped: true, reason: 'Sign in to synchronize saved actions' };
   isFlushing = true;
-  console.log(`🔄 [OfflineQueue] Flushing ${items.length} queued action(s) to relay hub...`);
-
   try {
-    const response = await api.post('/offline/sync-batch', {
-      items,
-      sourceNode: 'IndexedDB PWA Relay Client',
-    });
-
-    const results = response.data.results || [];
-
-    // Safely remove processed or duplicate-ignored items from IndexedDB
-    for (const res of results) {
-      if (res.status === 'SYNCED' || res.status === 'DUPLICATE_IGNORED') {
-        const matchingItem = items.find(
-          (item) =>
-            item.idempotencyKey === (res.item?.idempotencyKey || res.idempotencyKey) ||
-            item.id === res.item?.id
-        );
-        if (matchingItem && matchingItem.id) {
-          await removeAction(matchingItem.id);
-        }
+    const items = await getQueuedActions();
+    let syncedCount = 0, failedCount = 0;
+    const errors = [];
+    while (items.length) {
+      if (localStorage.getItem('sih_auth_token') !== sessionToken || localStorage.getItem('sih_user') !== sessionOwner) return { syncedCount, failedCount, error: 'Account changed during synchronization. Remaining actions are saved for their original account.' };
+      const batch = [];
+      let bytes = 100;
+      while (items.length && batch.length < 50) {
+        const size = new TextEncoder().encode(JSON.stringify(items[0])).length;
+        if (batch.length && bytes + size > 900000) break;
+        batch.push(items.shift()); bytes += size;
+      }
+      const response = await api.post('/offline/sync-batch', { items: batch, sourceNode: 'IndexedDB PWA Relay Client' }, { headers: { Authorization: 'Bearer ' + sessionToken } });
+      for (const result of response.data.results || []) {
+        const action = batch.find(item => item.idempotencyKey === result.item?.idempotencyKey);
+        if (action && ['SYNCED', 'DUPLICATE_IGNORED'].includes(result.status)) { await removeAction(action.id); syncedCount++; }
+        else if (result.status === 'FAILED') { failedCount++; errors.push(result.error); }
       }
     }
-
-    notifySubscribers();
-    console.log(`✅ [OfflineQueue] Batch flush completed:`, response.data.message);
-    return response.data;
+    await notifySubscribers();
+    window.dispatchEvent(new CustomEvent('sih:queue-synced'));
+    return { syncedCount, failedCount, errors, message: syncedCount + ' synchronized, ' + failedCount + ' failed' };
   } catch (error) {
-    console.warn('⚠️ [OfflineQueue] Flush attempt failed (relay hub unreachable):', error.message);
-    return { error: error.message };
-  } finally {
-    isFlushing = false;
-  }
+    return { error: error.response?.data?.error || error.message };
+  } finally { isFlushing = false; }
 }
 
 // 1. Auto-flush on network reconnection
@@ -283,6 +273,10 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     console.log('🌐 [OfflineQueue] Network restored. Triggering automatic queue flush...');
     flushQueue();
+  });
+  window.addEventListener('sih:session-changed', () => { notifySubscribers(); flushQueue(); });
+  window.addEventListener('sih:relay-connected', async () => {
+    if (await getQueueCount()) return flushQueue();
   });
 
   // 2. Boot-time flush (covers app opened after being closed offline)

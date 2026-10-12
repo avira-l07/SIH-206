@@ -169,6 +169,8 @@ export default function Register({ onSwitchToLogin, onSwitchToPublicAlerts, onBa
             <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">Security Password</label>
             <input
               type="password"
+              minLength={8}
+              maxLength={72}
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}

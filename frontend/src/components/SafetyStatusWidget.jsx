@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Search, CheckCircle2, AlertCircle, HelpCircle, Loader2, Lock, WifiOff } from 'lucide-react';
+import { ShieldCheck, Search, CheckCircle2, AlertCircle, HelpCircle, Loader2, Lock } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { enqueueAction, isManualOffline } from '../services/offlineQueue';
@@ -43,7 +43,7 @@ export default function SafetyStatusWidget() {
         setUpdateMsg(`Marked as ${newStatus} (Saved Offline • Syncs on reconnect)`);
         setTimeout(() => setUpdateMsg(''), 4000);
       } catch (err) {
-        console.error('Failed to queue safety status offline:', err);
+        setUpdateMsg(err.message || 'Could not save this update on your device.');
       } finally {
         setUpdating(false);
       }
@@ -57,7 +57,7 @@ export default function SafetyStatusWidget() {
       setUpdateMsg(`Marked as ${newStatus}`);
       setTimeout(() => setUpdateMsg(''), 3000);
     } catch (err) {
-      console.warn('Direct safety status update failed, queueing offline:', err);
+      if (err.response) { setUpdateMsg(err.response.data?.error || 'Status update rejected. Please try again.'); return; }
       try {
         await enqueueAction({
           type: 'SAFETY_STATUS',
@@ -70,7 +70,7 @@ export default function SafetyStatusWidget() {
         setTimeout(() => setUpdateMsg(''), 4000);
       } catch (queueErr) {
         console.error('Failed to update safety status', err);
-        alert(err.response?.data?.error || 'Failed to update safety status');
+        setUpdateMsg(queueErr.message || 'Could not save your safety update.');
       }
     } finally {
       setUpdating(false);
@@ -121,7 +121,7 @@ export default function SafetyStatusWidget() {
         </div>
 
         <p className="text-[11px] text-[#14231F]/70 mt-2 mb-2.5">
-          Broadcast your safety status to verified family & responders:
+          Broadcast your safety status to people who know your registered contact details:
         </p>
 
         <div className="grid grid-cols-3 gap-2">
@@ -186,7 +186,7 @@ export default function SafetyStatusWidget() {
             Relative Safety Lookup
           </span>
           <span className="text-[10px] text-[#14231F]/60 flex items-center gap-0.5">
-            <Lock className="w-2.5 h-2.5 text-[#2E6E4E]" /> Privacy-Safe
+            <Lock className="w-2.5 h-2.5 text-[#2E6E4E]" /> Limited status only
           </span>
         </div>
 
@@ -196,7 +196,7 @@ export default function SafetyStatusWidget() {
             id="safety-lookup-input"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Name or phone (e.g. Rohan or +91 98201...)"
+            placeholder="Exact full name or registered phone"
             className="flex-1 p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
           />
           <button

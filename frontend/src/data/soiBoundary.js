@@ -1,4 +1,4 @@
-﻿// Official Survey of India (SOI) Northern Sovereign Frontier Alignment
+﻿// Approximate reference overlay. Authoritative provenance has not been verified.
 // Delineates Jammu & Kashmir, Ladakh (including Gilgit-Baltistan & Aksai Chin),
 // Himachal Pradesh, and Uttarakhand external boundary.
 export const SOI_NORTHERN_BOUNDARY = [

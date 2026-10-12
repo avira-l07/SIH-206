@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import ModalDialog from './ModalDialog';
+import useNow from '../hooks/useNow';
+import {nearbyAdvisories} from '../services/evacuationPlan';
+import {validMapPoint} from '../services/offlineMap';
 import {
   AlertTriangle,
   AlertCircle,
@@ -303,8 +307,9 @@ function writeStoredIds(key, ids) {
   } catch {}
 }
 
-export default function AlertBanner({ alerts = [], onSelectAlert }) {
+export default function AlertBanner({ alerts = [], onSelectAlert, location }) {
   const { user } = useAuth();
+  const now=useNow(),coordinates=validMapPoint(location)?location:validMapPoint(user)?user:null;
   const isAdmin = user?.role === 'ADMIN';
   const userScope = user?.id ? `u_${user.id}` : (user?.role ? `role_${user.role}` : 'anon');
   const dismissedKey = `sih_dismissed_alert_ids_${userScope}`;
@@ -346,7 +351,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
   // they should never receive civilian evacuation alarms, full-screen takeovers, or audio sirens
   const activeAlerts = isAdmin
     ? []
-    : alerts.filter((a) => a.active && !dismissedIds.includes(a.id));
+    : alerts.filter((a) => a.active && !dismissedIds.includes(a.id) && (!a.evacuation || nearbyAdvisories([{...a,...a.evacuation}],coordinates,user?.region,now).length>0));
 
   // Critical alerts that haven't been acknowledged in full-screen mode
   const unacknowledgedCritical = isAdmin
@@ -451,12 +456,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
     <>
       {/* 1. MAX-PRIORITY FULL-SCREEN EMERGENCY TAKEOVER MODAL */}
       {unacknowledgedCritical && (
-        <div
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="max-priority-title"
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
-        >
+        <ModalDialog label="Critical disaster alert" onClose={()=>handleAcknowledgeCritical(unacknowledgedCritical.id)}>
           <div className="relative max-w-xl w-full bg-[#14231F] border-4 border-[#B23A2E] text-[#F6F4EF] rounded-xl shadow-2xl p-6 sm:p-8 space-y-6 overflow-hidden">
             {/* Pulsing hazard background aura */}
             <div className="absolute -top-24 -right-24 w-64 h-64 bg-[#B23A2E]/25 rounded-full blur-3xl pointer-events-none animate-pulse" />
@@ -471,7 +471,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-[#B23A2E] animate-ping" />
                     <span className="font-mono text-xs uppercase font-bold tracking-widest text-[#B23A2E]">
-                      MAX-PRIORITY CIVIL DEFENSE BROADCAST
+                      Critical local alert
                     </span>
                   </div>
                   <h2
@@ -556,7 +556,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
 
             {/* Emergency Message Body */}
             <div className="p-4 bg-white/5 border border-white/10 rounded-lg space-y-2">
-              <div className="text-xs font-mono uppercase text-white/60">Official Broadcast Transmission:</div>
+              <div className="text-xs font-semibold text-white/60">Alert message</div>
               <p className="text-base sm:text-lg font-medium text-white leading-relaxed">
                 "{unacknowledgedCritical.message}"
               </p>
@@ -575,7 +575,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
                 className="w-full sm:flex-1 py-3.5 px-5 bg-[#B23A2E] hover:bg-[#972E24] text-white font-display font-bold text-sm rounded-lg shadow-lg flex items-center justify-center gap-2 transition-transform active:scale-[0.98]"
               >
                 <CheckCircle className="w-5 h-5" />
-                <span>I ACKNOWLEDGE THIS EMERGENCY ALERT</span>
+                <span>I have read this alert</span>
               </button>
 
               {onSelectAlert && (
@@ -593,7 +593,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
               )}
             </div>
           </div>
-        </div>
+        </ModalDialog>
       )}
 
       {/* 2. PERSISTENT TOP BANNER (Active Alerts) */}
@@ -601,7 +601,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
         aria-label="Disaster Alerts"
         className={`w-full ${bgClasses} px-4 py-2.5 transition-all border-b border-black/10`}
       >
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-sm">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm">
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             {isCritical ? (
               <AlertTriangle className="w-5 h-5 flex-shrink-0 animate-pulse text-white" />
@@ -609,16 +609,16 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
               <AlertCircle className="w-5 h-5 flex-shrink-0 text-white" />
             )}
 
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 truncate">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
               <span className="font-mono font-bold text-xs uppercase px-1.5 py-0.5 bg-black/20 rounded tracking-wider">
-                {currentAlert.severity} // {currentAlert.hazardType}
+                {currentAlert.sourceKind==='DEMO'?'Demo · ':''}{currentAlert.severity==='CRITICAL'?'Critical alert':'Advisory'} · {currentAlert.hazardType.toLowerCase()}
               </span>
               <span className="font-bold">{currentAlert.region}:</span>
-              <span className="opacity-95 truncate">{currentAlert.message}</span>
+              <span className="opacity-95 break-words basis-full">{currentAlert.message}</span><span className="text-xs opacity-90">{currentAlert.sourceKind==='MANUAL'?'Operator report':currentAlert.sourceKind==='LIVE_WEATHER'?'Live weather':currentAlert.sourceKind==='DEMO'?'Demonstration':'Source unknown'} · {new Date(currentAlert.observedAt||currentAlert.createdAt).toLocaleString()}</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-3 flex-shrink-0 self-end sm:self-center">
             {activeAlerts.length > 1 && (
               <span className="text-xs font-mono bg-black/20 px-2 py-0.5 rounded">
                 +{activeAlerts.length - 1} more
@@ -630,7 +630,7 @@ export default function AlertBanner({ alerts = [], onSelectAlert }) {
                 onClick={() => onSelectAlert(currentAlert)}
                 className="text-xs underline flex items-center gap-0.5 hover:opacity-80"
               >
-                Focus Map <ChevronRight className="w-3.5 h-3.5" />
+                View on map <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
 

@@ -1,25 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import ModalDialog from '../components/ModalDialog';
+import useDashboardRefresh from '../hooks/useDashboardRefresh';
+import { refreshSections } from '../services/dashboardRefresh';
+import DashboardTabs from '../components/DashboardTabs';
+import QuickActions from '../components/QuickActions';
+import useConsoleSection from '../hooks/useConsoleSection';
+import ResponseWorkspace from '../components/ResponseWorkspace';
+import CreateShelter from '../components/CreateShelter';
+import OperationalStats from '../components/OperationalStats';
+import { subscribeSocketEvents } from '../services/socketEvents';
+import AdminUserApproval from '../components/AdminUserApproval';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
 import MapView from '../components/MapView';
-import TriageKanban from '../components/TriageKanban';
 import OfflineSimulationDrawer from '../components/OfflineSimulationDrawer';
-import {
-  ShieldAlert,
-  Radio,
-  CloudRain,
-  Home,
-  Activity,
-  AlertTriangle,
-  Loader2,
-  Map,
-  Kanban,
-  Phone,
-  Users,
-  Search,
-  X,
-} from 'lucide-react';
+import { Radio, CloudRain, Activity, AlertTriangle, Loader2 } from 'lucide-react';
 import ShelterSuppliesModal from '../components/ShelterSuppliesModal';
 import AdminShelterRollup from '../components/AdminShelterRollup';
 
@@ -27,12 +23,18 @@ export default function AdminDashboard() {
   const { user } = useAuth();
   const { socket } = useSocket();
 
+  const refreshVersion = React.useRef(0);
+  const invalidateRefresh = useCallback(() => { refreshVersion.current++; }, []);
+  const [notice, setNotice] = useState('');
+  const [dataError, setDataError] = useState('');
+  const [broadcastError, setBroadcastError] = useState('');
+  const [dataLoading, setDataLoading] = useState(true);
   const [alerts, setAlerts] = useState([]);
   const [shelters, setShelters] = useState([]);
   const [sosList, setSosList] = useState([]);
   const [hazardReports, setHazardReports] = useState([]);
   const [focusCoords, setFocusCoords] = useState(null);
-  const [viewMode, setViewMode] = useState('MAP'); // 'MAP', 'KANBAN', 'SHELTERS', or 'BROADCASTS'
+  const [viewMode, setViewMode] = useConsoleSection(['KANBAN','MAP','SHELTERS','BROADCASTS','TEAM'],'KANBAN');
   const [viewingSuppliesShelter, setViewingSuppliesShelter] = useState(null);
   const [restockAlert, setRestockAlert] = useState(null);
 
@@ -42,13 +44,13 @@ export default function AdminDashboard() {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcastMode, setBroadcastMode] = useState('area'); // 'area' | 'geospatial'
   const [alertForm, setAlertForm] = useState({
-    hazardType: 'LANDSLIDE',
-    severity: 'CRITICAL',
-    region: 'Chamoli - Badrinath National Highway (NH-7)',
-    lat: 30.4074,
-    lng: 79.3248,
+    hazardType: 'ADVISORY',
+    severity: 'WATCH',
+    region: '',
+    lat: user?.lat ?? '',
+    lng: user?.lng ?? '',
     radiusKm: 15.0,
-    message: 'Major landslide blocking NH-7 near Chamoli following torrential cloudburst. Severe slope instability, active debris flow. Avoid mountain corridors, evacuate valley floor.',
+    message: '',
   });
   const [broadcastLoading, setBroadcastLoading] = useState(false);
   const [broadcastSuccess, setBroadcastSuccess] = useState(null);
@@ -84,11 +86,10 @@ export default function AdminDashboard() {
 
       setAreaBroadcastResult({
         success: true,
-        message: `Public alert dispatched to registered phones (SMS) and push subscribers in ${areaBroadcastRegion}!`,
+        message: `Alert published for ${areaBroadcastRegion}. SMS and push delivery depend on configured providers.`,
       });
       setAreaBroadcastMessage('');
-      fetchConsoleData();
-    } catch (err) {
+      } catch (err) {
       console.error('Failed to send area broadcast:', err);
       setAreaBroadcastResult({
         success: false,
@@ -99,27 +100,26 @@ export default function AdminDashboard() {
     }
   };
 
-  const fetchConsoleData = async () => {
+  const fetchConsoleData = useCallback(async () => {
+    const version = ++refreshVersion.current; setDataLoading(true);
     try {
-      const [alertsRes, sheltersRes, sosRes, hazardsRes, statsRes] = await Promise.all([
-        api.get('/alerts?activeOnly=false'),
-        api.get('/shelters'),
-        api.get('/sos'),
-        api.get('/hazards').catch(() => ({ data: { reports: [] } })),
-        api.get('/registry/stats').catch(() => ({ data: { totalPhones: 0, totalPushSubs: 0 } })),
-      ]);
-      setAlerts(alertsRes.data.alerts || []);
-      setShelters(sheltersRes.data.shelters || []);
-      setSosList(sosRes.data.requests || []);
-      setHazardReports(hazardsRes.data.reports || []);
-      setRegistryStats(statsRes.data || { totalPhones: 0, totalPushSubs: 0 });
-    } catch (err) {
-      console.error('Error fetching admin data', err);
-    }
-  };
+      const result = await refreshSections([
+        { label: 'Alerts', load: () => api.get('/alerts?activeOnly=false'), apply: res => setAlerts(res.data.alerts || []) },
+        { label: 'Shelters', load: () => api.get('/shelters'), apply: res => setShelters(res.data.shelters || []) },
+        { label: 'Requests', load: () => api.get('/sos'), apply: res => setSosList(res.data.requests || []) },
+        { label: 'Hazards', load: () => api.get('/hazards'), apply: res => setHazardReports(res.data.reports || []) },
+        { label: 'Registry statistics', load: () => api.get('/registry/stats'), apply: res => setRegistryStats(res.data) },
+      ], () => version === refreshVersion.current);
+      if (!result.applied) return;
+      setDataError(result.failed.length ? 'Could not refresh: ' + result.failed.join(', ') + '. Previously loaded data may be out of date.' : '');
+
+    } catch { if (version === refreshVersion.current) setDataError('Could not refresh the dashboard. Please retry.'); }
+    finally { if (version === refreshVersion.current) setDataLoading(false); }
+  }, []);
+
+  useDashboardRefresh(socket, fetchConsoleData, invalidateRefresh);
 
   useEffect(() => {
-    fetchConsoleData();
 
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -130,33 +130,35 @@ export default function AdminDashboard() {
         { enableHighAccuracy: true, timeout: 8000 }
       );
     }
-  }, []);
+  }, [fetchConsoleData]);
 
   // Socket.io sync
   useEffect(() => {
     if (!socket) return;
+    const handlers = {};
+    const on = (event, handler) => { handlers[event] = handler; };
 
-    socket.on('sos:created', (newSOS) => {
+    on('sos:created', (newSOS) => {
       setSosList((prev) => [newSOS, ...prev.filter((s) => s.id !== newSOS.id)]);
     });
 
-    socket.on('sos:status_changed', (updatedSOS) => {
+    on('sos:status_changed', (updatedSOS) => {
       setSosList((prev) =>
         prev.map((s) => (s.id === updatedSOS.id ? updatedSOS : s))
       );
     });
 
-    socket.on('alert:new', (newAlert) => {
+    on('alert:new', (newAlert) => {
       setAlerts((prev) => [newAlert, ...prev.filter((a) => a.id !== newAlert.id)]);
     });
 
-    socket.on('alert:deactivated', (deactivated) => {
+    on('alert:deactivated', (deactivated) => {
       setAlerts((prev) =>
         prev.map((a) => (a.id === deactivated.id ? { ...a, active: false } : a))
       );
     });
 
-    socket.on('alert:deleted', (payload) => {
+    on('alert:deleted', (payload) => {
       // Single delete or bulk: remove from local state by id(s)
       if (payload.bulk) {
         setAlerts((prev) => prev.filter((a) => a.active)); // keep only active ones
@@ -165,57 +167,46 @@ export default function AdminDashboard() {
       }
     });
 
-    socket.on('shelter:occupancy_changed', (updatedShelter) => {
+    on('shelter:occupancy_changed', (updatedShelter) => {
       setShelters((prev) =>
-        prev.map((s) => (s.id === updatedShelter.id ? updatedShelter : s))
+        [updatedShelter, ...prev.filter((s) => s.id !== updatedShelter.id)]
       );
     });
 
-    socket.on('shelter:audit_updated', (updatedShelter) => {
+    on('shelter:audit_updated', (updatedShelter) => {
       setShelters((prev) =>
-        prev.map((s) => (s.id === updatedShelter.id ? updatedShelter : s))
+        [updatedShelter, ...prev.filter((s) => s.id !== updatedShelter.id)]
       );
     });
 
-    socket.on('hazard:new', (newReport) => {
+    on('hazard:new', (newReport) => {
       setHazardReports((prev) => [newReport, ...prev.filter((r) => r.id !== newReport.id)]);
     });
 
-    socket.on('hazard:confirmed', (updatedReport) => {
+    on('hazard:confirmed', (updatedReport) => {
       setHazardReports((prev) =>
         prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
       );
     });
 
-    socket.on('hazard:tier_changed', (updatedReport) => {
+    on('hazard:tier_changed', (updatedReport) => {
       setHazardReports((prev) =>
         prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
       );
     });
 
-    socket.on('shelter:restock_needed', (alertData) => {
+    on('shelter:restock_needed', (alertData) => {
       setRestockAlert(alertData);
     });
 
-    return () => {
-      socket.off('sos:created');
-      socket.off('sos:status_changed');
-      socket.off('alert:new');
-      socket.off('alert:deactivated');
-      socket.off('alert:deleted');
-      socket.off('shelter:occupancy_changed');
-      socket.off('shelter:audit_updated');
-      socket.off('shelter:restock_needed');
-      socket.off('hazard:new');
-      socket.off('hazard:confirmed');
-      socket.off('hazard:tier_changed');
-    };
+    return subscribeSocketEvents(socket, handlers);
   }, [socket]);
 
   // Handle Broadcast Alert
   const handleBroadcastAlert = async (e) => {
     e.preventDefault();
     setBroadcastLoading(true);
+    setBroadcastError('');
     try {
       const res = await api.post('/alerts', {
         ...alertForm,
@@ -223,14 +214,13 @@ export default function AdminDashboard() {
         lng: parseFloat(alertForm.lng),
         radiusKm: parseFloat(alertForm.radiusKm) || 5.0,
       });
-      setAlerts((prev) => [res.data.alert, ...prev]);
+      setAlerts((prev) => [res.data.alert, ...prev.filter(a => a.id !== res.data.alert.id)]);
       setFocusCoords([res.data.alert.lat, res.data.alert.lng]);
       setBroadcastOpen(false);
-      setBroadcastSuccess(`Alert #${res.data.alert.id} (${res.data.alert.severity} ${res.data.alert.hazardType}) broadcasted successfully to citizens and response teams.`);
+      setBroadcastSuccess(`Alert #${res.data.alert.id} (${res.data.alert.severity} ${res.data.alert.hazardType}) published to the live feed. External delivery depends on configured providers.`);
       setTimeout(() => setBroadcastSuccess(null), 6000);
     } catch (err) {
-      console.error('Broadcast failed', err);
-      alert(err.response?.data?.error || 'Failed to broadcast alert');
+      setBroadcastError(err.response?.data?.error || 'Failed to broadcast alert');
     } finally {
       setBroadcastLoading(false);
     }
@@ -239,13 +229,12 @@ export default function AdminDashboard() {
   // 1-tap Deactivate Alert (PATCH /alerts/:id/deactivate)
   const handleDeactivateAlert = async (alertId) => {
     try {
-      const res = await api.patch(`/alerts/${alertId}/deactivate`);
+      await api.patch(`/alerts/${alertId}/deactivate`, {});
       setAlerts((prev) =>
         prev.map((a) => (a.id === alertId ? { ...a, active: false } : a))
       );
     } catch (err) {
-      console.error('Failed to deactivate alert', err);
-      alert(err.response?.data?.error || 'Failed to deactivate alert');
+      setDataError(err.response?.data?.error || 'Failed to deactivate alert');
     }
   };
 
@@ -257,8 +246,7 @@ export default function AdminDashboard() {
       setBroadcastSuccess(`Alert #${alertId} permanently removed from log.`);
       setTimeout(() => setBroadcastSuccess(null), 5000);
     } catch (err) {
-      console.error('Failed to delete alert', err);
-      alert(err.response?.data?.error || 'Failed to delete alert');
+      setDataError(err.response?.data?.error || 'Failed to delete alert');
     } finally {
       setConfirmDelete(null);
     }
@@ -273,8 +261,7 @@ export default function AdminDashboard() {
       setBroadcastSuccess(res.data.message || `${count} resolved alerts cleared.`);
       setTimeout(() => setBroadcastSuccess(null), 5000);
     } catch (err) {
-      console.error('Failed to bulk delete resolved alerts', err);
-      alert(err.response?.data?.error || 'Bulk delete failed');
+      setDataError(err.response?.data?.error || 'Bulk delete failed');
     }
   };
 
@@ -286,33 +273,19 @@ export default function AdminDashboard() {
       const res = await api.post('/alerts/simulate', { region: simRegion });
       setSimResult(res.data);
       if (res.data.alert) {
-        setAlerts((prev) => [res.data.alert, ...prev]);
+        setAlerts((prev) => [res.data.alert, ...prev.filter(a => a.id !== res.data.alert.id)]);
         setFocusCoords([res.data.alert.lat, res.data.alert.lng]);
         setBroadcastSuccess(`Simulation triggered ${res.data.alert.severity} alert for ${res.data.alert.region}.`);
         setTimeout(() => setBroadcastSuccess(null), 6000);
       }
     } catch (err) {
-      console.error('Simulation error', err);
-      alert(err.response?.data?.error || 'Simulation trigger failed');
+      setDataError(err.response?.data?.error || 'Simulation trigger failed');
     } finally {
       setSimLoading(false);
     }
   };
 
   // Quick Shelter Occupancy Delta (Commutative Event Flow)
-  const handleAdjustOccupancy = async (shelterId, delta) => {
-    try {
-      const res = await api.post(`/shelters/${shelterId}/events`, {
-        deltaOccupancy: delta,
-        reason: delta > 0 ? 'Admin quick admit (+10)' : 'Admin quick release (-10)',
-      });
-      setShelters((prev) =>
-        prev.map((s) => (s.id === shelterId ? res.data.shelter : s))
-      );
-    } catch (err) {
-      console.error('Failed to apply shelter delta event', err);
-    }
-  };
 
   const handleConfirmHazard = async (reportId) => {
     try {
@@ -320,20 +293,18 @@ export default function AdminDashboard() {
       setHazardReports((prev) =>
         prev.map((r) => (r.id === reportId ? res.data.report : r))
       );
-      alert(`Report confirmed by authority! Current tier: ${res.data.report.confidenceTier}`);
+      setNotice('Hazard confirmation saved.');
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to confirm report');
+      setDataError(err.response?.data?.error || 'Failed to confirm report');
     }
   };
 
-  const totalCapacity = shelters.reduce((sum, s) => sum + s.capacity, 0);
-  const totalOccupied = shelters.reduce((sum, s) => sum + s.currentOccupancy, 0);
-  const activeAlertsCount = alerts.filter((a) => a.active).length;
-  const pendingSOSCount = sosList.filter((s) => s.status === 'PENDING' || s.status === 'VERIFIED').length;
-  const verifiedHazardsCount = hazardReports.filter((r) => r.confidenceTier === 'RED').length;
 
   return (
-    <div className="flex flex-col min-h-[calc(100vh-61px)]">
+    <div className="flex flex-col min-w-0 w-full min-h-[calc(100vh-61px)]">
+      {notice && <p role="status" className="px-4 py-3 bg-emerald-50 text-emerald-900">{notice} <button className="underline ml-2" onClick={() => setNotice('')}>Dismiss</button></p>}
+      {dataLoading && <p role="status" className="px-4 py-2 text-sm">Refreshing live data…</p>}
+      {dataError && <div role="alert" className="px-4 py-3 bg-red-50 text-red-800">{dataError} <button type="button" className="underline font-bold" onClick={fetchConsoleData}>Retry</button></div>}
       {/* Broadcast Success Notification */}
       {broadcastSuccess && (
         <div className="bg-[#2E6E4E] text-white p-3 rounded mx-4 mt-2 flex items-center justify-between gap-3 shadow-md font-mono text-xs">
@@ -383,134 +354,14 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      <div className="max-w-7xl w-full mx-auto p-3 sm:p-4 flex-1 flex flex-col gap-4">
-        {/* Command Top Strip */}
-        <div className="bg-[#FFFFFF] border border-[#D8D3C7] p-4 rounded flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-[#B23A2E]" />
-              <h1 className="font-display font-bold text-lg sm:text-xl text-[#14231F] tracking-tight">
-                NDMA SITUATIONAL COMMAND CENTER
-              </h1>
-            </div>
-            <p className="text-xs text-[#14231F]/70 font-mono mt-0.5">
-              Authority ID: {user?.name || 'Director-General'} • System Status: NORMAL_DISPATCH_LEVEL
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* View Mode Switcher */}
-            <div className="flex items-center bg-[#EFECE4] p-0.5 border border-[#D8D3C7] rounded text-xs font-mono">
-              <button
-                type="button"
-                id="admin-view-map-btn"
-                onClick={() => setViewMode('MAP')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
-                  viewMode === 'MAP' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
-                }`}
-              >
-                <Map className="w-3.5 h-3.5" />
-                <span>INCIDENT MAP</span>
-              </button>
-              <button
-                type="button"
-                id="admin-view-kanban-btn"
-                onClick={() => setViewMode('KANBAN')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
-                  viewMode === 'KANBAN' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
-                }`}
-              >
-                <Kanban className="w-3.5 h-3.5" />
-                <span>TRIAGE KANBAN</span>
-              </button>
-              <button
-                type="button"
-                id="admin-view-shelters-btn"
-                onClick={() => setViewMode('SHELTERS')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
-                  viewMode === 'SHELTERS' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
-                }`}
-              >
-                <Home className="w-3.5 h-3.5" />
-                <span>SHELTER ROLLUP</span>
-              </button>
-              <button
-                type="button"
-                id="admin-view-broadcasts-btn"
-                onClick={() => setViewMode('BROADCASTS')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded transition-colors ${
-                  viewMode === 'BROADCASTS' ? 'bg-[#14231F] text-white font-bold' : 'text-[#14231F]/70 hover:text-[#14231F]'
-                }`}
-              >
-                <Radio className="w-3.5 h-3.5" />
-                <span>BROADCASTS ({activeAlertsCount})</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                id="open-area-broadcast-btn"
-                onClick={() => {
-                  setBroadcastMode('area');
-                  setBroadcastOpen(true);
-                }}
-                className="flex items-center gap-1.5 px-3 py-2 bg-[#14231F] hover:bg-[#1f3731] text-white font-display font-bold text-xs rounded transition-colors shadow-xs"
-                title="Direct regional broadcast to registered phones & push devices"
-              >
-                <Radio className="w-3.5 h-3.5 text-[#4ADE80]" />
-                <span>SEND PUBLIC ALERT TO AREA</span>
-              </button>
-
-              <button
-                id="open-broadcast-modal-btn"
-                onClick={() => {
-                  setBroadcastMode('geospatial');
-                  setBroadcastOpen(true);
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-[#B23A2E] hover:bg-[#992c21] text-white font-display font-bold text-xs rounded transition-colors"
-                title="Transmit geospatial hazard broadcast with radius"
-              >
-                <Radio className="w-3.5 h-3.5" />
-                <span>OFFICIAL BROADCAST</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Tactical Key Metrics Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono">
-          <div className="bg-[#FFFFFF] border border-[#D8D3C7] p-3 rounded">
-            <div className="text-[11px] text-[#14231F]/70 font-semibold uppercase">Active Hazard Alerts</div>
-            <div className="text-2xl font-bold text-[#B23A2E] tabular-nums mt-1">{activeAlertsCount}</div>
-            <div className="text-[10px] text-[#14231F]/60 mt-0.5">Real-time broadcast live</div>
-          </div>
-
-          <div className="bg-[#FFFFFF] border border-[#D8D3C7] p-3 rounded">
-            <div className="text-[11px] text-[#14231F]/70 font-semibold uppercase">Pending Citizen SOS</div>
-            <div className="text-2xl font-bold text-[#B23A2E] tabular-nums mt-1">{pendingSOSCount}</div>
-            <div className="text-[10px] text-[#14231F]/60 mt-0.5">Awaiting field rescue</div>
-          </div>
-
-          <div className="bg-[#FFFFFF] border border-[#D8D3C7] p-3 rounded">
-            <div className="text-[11px] text-[#14231F]/70 font-semibold uppercase">Shelter Occupancy</div>
-            <div className="text-2xl font-bold text-[#14231F] tabular-nums mt-1">
-              {totalOccupied} / {totalCapacity}
-            </div>
-            <div className="text-[10px] text-[#2E6E4E] font-semibold mt-0.5">
-              {totalCapacity - totalOccupied} beds free
-            </div>
-          </div>
-
-          <div className="bg-[#FFFFFF] border border-[#D8D3C7] p-3 rounded">
-            <div className="text-[11px] text-[#14231F]/70 font-semibold uppercase">Verified Hazard Ground Truth</div>
-            <div className="text-2xl font-bold text-[#2E6E4E] tabular-nums mt-1">{verifiedHazardsCount}</div>
-            <div className="text-[10px] text-[#14231F]/60 mt-0.5">{hazardReports.length} total reports tracked</div>
-          </div>
-        </div>
-
+      <div className="max-w-7xl w-full mx-auto p-3 sm:p-4 pb-20 flex-1 flex flex-col gap-4">
+        <header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-2xl font-bold">Operator dashboard</h1><p className="mt-1 text-sm text-[#14231F]/65">Review requests, coordinate volunteers and publish local alerts.</p></div><button type="button" onClick={() => { setBroadcastError(''); setBroadcastMode('area'); setBroadcastOpen(true); }} className="rounded-lg bg-[#14231F] px-4 py-2.5 text-sm font-semibold text-white">Send alert</button></header>
+        <QuickActions user={user} tickets={sosList} loading={dataLoading} stale={Boolean(dataError)} />
+        <OperationalStats />
+        <DashboardTabs tabs={[{ id: 'KANBAN', label: 'Requests' }, { id: 'MAP', label: 'Map' }, { id: 'SHELTERS', label: 'Shelters & supplies' }, { id: 'BROADCASTS', label: 'Alerts' }, { id: 'TEAM', label: 'Volunteer team' }]} value={viewMode} onChange={setViewMode} />
         {/* Dynamic Body: Map View, Kanban, Shelters, or Broadcasts */}
         {viewMode === 'KANBAN' ? (
-          <TriageKanban
+          <ResponseWorkspace
             sosList={sosList}
             currentUser={user}
             onSOSUpdated={(updated) =>
@@ -523,7 +374,8 @@ export default function AdminDashboard() {
           />
         ) : viewMode === 'SHELTERS' ? (
           <div className="space-y-4 flex-1">
-            <AdminShelterRollup
+            <CreateShelter onCreated={shelter => setShelters(prev => [shelter, ...prev.filter(s => s.id !== shelter.id)])} />
+            <AdminShelterRollup onViewSupplies={setViewingSuppliesShelter}
               shelters={shelters}
               onSelectShelterCoords={(coords) => {
                 setFocusCoords(coords);
@@ -532,165 +384,9 @@ export default function AdminDashboard() {
             />
           </div>
         ) : viewMode === 'BROADCASTS' ? (
-          <div className="space-y-4 flex-1">
-            {/* Full View: Active Disaster Broadcasts Management Table */}
-            <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#D8D3C7]">
-                <div className="flex items-center gap-2">
-                  <Radio className="w-4 h-4 text-[#B23A2E]" />
-                  <h3 className="font-display font-bold text-sm text-[#14231F] uppercase tracking-wide">
-                    Active Disaster Broadcasts Management Table
-                  </h3>
-                  <span className="text-[10px] font-mono px-2 py-0.5 bg-[#B23A2E] text-white rounded font-bold">
-                    {activeAlertsCount} ACTIVE
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {alerts.some((a) => !a.active) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm(`Clear all ${alerts.filter((a) => !a.active).length} resolved/standby alert(s) from the log? This cannot be undone.`)) {
-                          handleBulkDeleteResolved();
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F]/70 hover:text-[#B23A2E] font-bold text-xs rounded transition-colors font-mono border border-[#D8D3C7]"
-                    >
-                      Clear Resolved
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setBroadcastOpen(true)}
-                    className="px-3 py-1.5 bg-[#B23A2E] hover:bg-[#992c21] text-white font-bold text-xs rounded transition-colors font-mono"
-                  >
-                    + NEW BROADCAST
-                  </button>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-mono border-collapse">
-                  <thead>
-                    <tr className="bg-[#FAF8F5] border-b border-[#D8D3C7] text-[#14231F]/70 text-[11px] uppercase">
-                      <th className="p-2.5">ID / Severity</th>
-                      <th className="p-2.5">Hazard Type</th>
-                      <th className="p-2.5">Target Region & Radius</th>
-                      <th className="p-2.5">Center Coordinates</th>
-                      <th className="p-2.5">Advisory Message</th>
-                      <th className="p-2.5">Created At</th>
-                      <th className="p-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#D8D3C7]">
-                    {alerts.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="p-8 text-center text-[#14231F]/50">
-                          No disaster alerts registered in system.
-                        </td>
-                      </tr>
-                    ) : (
-                      alerts.map((alert) => {
-                        const isActive = alert.active;
-                        const isCritical = alert.severity === 'CRITICAL';
-                        return (
-                          <tr
-                            key={alert.id}
-                            className={`hover:bg-[#FAF8F5]/80 transition-colors ${
-                              !isActive ? 'opacity-50 bg-[#F6F4EF]/40' : ''
-                            }`}
-                          >
-                            <td className="p-2.5">
-                              <div className="flex items-center gap-1.5">
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                    isCritical
-                                      ? 'bg-[#B23A2E] text-white'
-                                      : 'bg-[#C97A2B] text-white'
-                                  }`}
-                                >
-                                  {alert.severity}
-                                </span>
-                                <span className="text-[#14231F]/60 text-[10px]">#{alert.id}</span>
-                              </div>
-                            </td>
-                            <td className="p-2.5 font-bold text-[#14231F]">
-                              {alert.hazardType}
-                            </td>
-                            <td className="p-2.5">
-                              <div className="font-semibold text-[#14231F]">{alert.region}</div>
-                              <div className="text-[11px] text-[#14231F]/70">
-                                Radius: <span className="font-bold text-[#14231F]">{alert.radiusKm || 5.0} km</span>
-                              </div>
-                            </td>
-                            <td className="p-2.5 text-[#14231F]/80">
-                              {typeof alert.lat === 'number' ? alert.lat.toFixed(4) : alert.lat},{' '}
-                              {typeof alert.lng === 'number' ? alert.lng.toFixed(4) : alert.lng}
-                            </td>
-                            <td className="p-2.5 max-w-sm truncate text-[#14231F]/80" title={alert.message}>
-                              {alert.message}
-                            </td>
-                            <td className="p-2.5 text-[#14231F]/60 text-[11px]">
-                              {new Date(alert.createdAt).toLocaleString()}
-                            </td>
-                            <td className="p-2.5 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setFocusCoords([alert.lat, alert.lng]);
-                                    setViewMode('MAP');
-                                  }}
-                                  className="px-2 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded text-[11px] text-[#14231F] font-semibold transition-colors"
-                                  title="Focus Incident Map"
-                                >
-                                  Map
-                                </button>
-                                {isActive ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeactivateAlert(alert.id)}
-                                    className="px-2.5 py-1 bg-[#B23A2E] hover:bg-[#972E24] text-white font-bold rounded text-[11px] transition-colors shadow-xs"
-                                    title="Deactivate broadcast and stand down warnings"
-                                  >
-                                    Deactivate
-                                  </button>
-                                ) : (
-                                  <>
-                                    <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
-                                      STANDBY
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setConfirmDelete({ id: alert.id, label: `#${alert.id} ${alert.severity} ${alert.hazardType} (${alert.region})` })}
-                                      className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 rounded text-[10px] font-bold transition-colors"
-                                      title="Permanently delete this resolved alert"
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4 flex-1">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {/* Map (65% width) */}
-              <div className="lg:col-span-8 flex flex-col min-h-[500px]">
-                <div className="flex items-center justify-between mb-1 text-xs font-mono text-[#14231F]/70">
-                  <span>REGIONAL SITUATIONAL OVERVIEW MAP</span>
-                  <span>HAZARD RADII, SOS DISTRESS, VERIFIED HAZARD PINS & SHELTERS</span>
-                </div>
-                <MapView
+          <section className="space-y-4"><h2 className="text-lg font-bold">Published alerts</h2>{alerts.length === 0 && <p className="rounded-lg border bg-white p-6 text-sm">No alerts published yet.</p>}<div className="grid grid-cols-1 md:grid-cols-2 gap-4">{alerts.map(item => <article key={item.id} className="rounded-xl border border-[#D8D3C7] bg-white p-5 space-y-3"><div className="flex justify-between gap-3"><h3 className="font-semibold">{item.region}</h3><span className={item.active ? 'text-red-700 text-xs font-semibold' : 'text-xs text-[#14231F]/50'}>{item.active ? item.severity === 'CRITICAL' ? 'Critical' : 'Advisory' : 'Ended'}</span></div><p className="text-sm">{item.message}</p><p className="text-xs opacity-60">{new Date(item.createdAt).toLocaleString()}</p><div className="flex gap-3 flex-wrap"><button className="text-sm underline" onClick={() => { setFocusCoords([item.lat, item.lng]); setViewMode('MAP'); }}>View on map</button>{item.active ? <button className="text-sm underline text-red-700" onClick={() => handleDeactivateAlert(item.id)}>End alert</button> : <button className="text-sm underline text-red-700" onClick={() => setConfirmDelete({ id: item.id, label: item.region })}>Delete record</button>}</div><details className="text-xs"><summary className="cursor-pointer opacity-60">Alert details</summary><p className="mt-2">{item.hazardType} · {item.radiusKm} km radius · {item.lat.toFixed(4)}, {item.lng.toFixed(4)}</p></details></article>)}</div>{alerts.some(a => !a.active) && <button className="text-sm underline" onClick={() => { if (window.confirm('Delete all ended alert records?')) handleBulkDeleteResolved(); }}>Clear ended alert records</button>}</section>
+        ) : viewMode === 'TEAM' ? <AdminUserApproval /> : (
+          <section className="h-[540px]">                <MapView
                   alerts={alerts.filter((a) => a.active)}
                   sosRequests={sosList}
                   shelters={shelters}
@@ -700,12 +396,9 @@ export default function AdminDashboard() {
                   onConfirmHazard={handleConfirmHazard}
                   onViewSupplies={(s) => setViewingSuppliesShelter(s)}
                   userRole="ADMIN"
-                />
-              </div>
-
-              {/* Admin Tools Side Panel (35% width) */}
-              <div className="lg:col-span-4 flex flex-col gap-4">
-                {/* AI/IoT Risk Engine Simulator Card */}
+                /></section>
+        )}
+        <details className="rounded-lg border border-[#D8D3C7] p-3"><summary className="cursor-pointer text-sm text-[#14231F]/65">Demo & weather tools</summary><div className="max-w-xl mt-3">                {/* AI/IoT Risk Engine Simulator Card */}
                 <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
                     <div className="flex items-center gap-2">
@@ -763,7 +456,7 @@ export default function AdminDashboard() {
                     <div className="p-2.5 bg-[#EFECE4] border border-[#D8D3C7] rounded text-xs space-y-1 font-mono">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-[#14231F]">
-                          Risk Score: {simResult.assessment?.score}/100
+                          Rule severity (not probability): {simResult.assessment?.score}/100
                         </span>
                         <span
                           className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${
@@ -785,231 +478,7 @@ export default function AdminDashboard() {
                   )}
                 </div>
 
-                {/* Shelter Capacity Quick Rollup Summary Card (Replacing per-item editing) */}
-                <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 flex-1 overflow-hidden flex flex-col">
-                  <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
-                    <div className="flex items-center gap-2">
-                      <Home className="w-4 h-4 text-[#14231F]" />
-                      <h3 className="font-display font-bold text-sm text-[#14231F] uppercase">
-                        Shelter Capacity Rollup
-                      </h3>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setViewMode('SHELTERS')}
-                      className="text-[10px] font-mono text-[#14231F] font-bold hover:underline"
-                    >
-                      FULL MATRIX →
-                    </button>
-                  </div>
-
-                  <div className="divide-y divide-[#D8D3C7] overflow-y-auto flex-1 max-h-[220px]">
-                    {shelters.map((s) => {
-                      const free = Math.max(0, s.capacity - s.currentOccupancy);
-                      const pct = s.capacity > 0 ? Math.min(100, Math.round((s.currentOccupancy / s.capacity) * 100)) : 0;
-                      return (
-                        <div key={s.id} className="py-2 flex items-center justify-between gap-2 text-xs">
-                          <div className="truncate flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-bold ${
-                                  s.status === 'RED'
-                                    ? 'bg-[#B23A2E] text-white'
-                                    : s.status === 'YELLOW'
-                                    ? 'bg-[#C97A2B] text-white'
-                                    : 'bg-[#EFECE4] text-[#14231F] border border-[#D8D3C7]'
-                                }`}
-                              >
-                                {s.status}
-                              </span>
-                              <span className="font-bold text-[#14231F] truncate">{s.name}</span>
-                            </div>
-                            <div className="font-mono text-[11px] text-[#14231F]/70 mt-0.5 flex items-center gap-2">
-                              <span>{s.currentOccupancy}/{s.capacity} beds ({pct}%)</span>
-                              <span className="text-[#14231F]/50">• {free} free</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1 font-mono">
-                            <button
-                              type="button"
-                              onClick={() => setViewingSuppliesShelter(s)}
-                              className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded border border-[#D8D3C7] text-[10px] font-bold text-[#14231F]"
-                              title="Relief supplies & shipments"
-                            >
-                              📦 SUPPLIES
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFocusCoords([s.lat, s.lng])}
-                              className="px-2 py-0.5 bg-[#14231F] text-white hover:bg-black rounded text-[10px]"
-                              title="Locate on map"
-                            >
-                              LOCATE
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Active Disaster Broadcasts Management Table (Accessible directly on main page) */}
-            <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded p-4 space-y-3 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#D8D3C7]">
-                <div className="flex items-center gap-2">
-                  <Radio className="w-4 h-4 text-[#B23A2E]" />
-                  <h3 className="font-display font-bold text-sm text-[#14231F] uppercase tracking-wide">
-                    Active Disaster Broadcasts Management Table
-                  </h3>
-                  <span className="text-[10px] font-mono px-2 py-0.5 bg-[#B23A2E] text-white rounded font-bold">
-                    {activeAlertsCount} ACTIVE
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {alerts.some((a) => !a.active) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm(`Clear all ${alerts.filter((a) => !a.active).length} resolved/standby alert(s) from the log? This cannot be undone.`)) {
-                          handleBulkDeleteResolved();
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F]/70 hover:text-[#B23A2E] font-bold text-xs rounded transition-colors font-mono border border-[#D8D3C7]"
-                    >
-                      Clear Resolved
-                    </button>
-                  )}
-                  <span className="text-xs font-mono text-[#14231F]/60">
-                    Real-time broadcast siren, SMS &amp; Web Push dispatch
-                  </span>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-mono border-collapse">
-                  <thead>
-                    <tr className="bg-[#FAF8F5] border-b border-[#D8D3C7] text-[#14231F]/70 text-[11px] uppercase">
-                      <th className="p-2.5">ID / Severity</th>
-                      <th className="p-2.5">Hazard Type</th>
-                      <th className="p-2.5">Target Region & Radius</th>
-                      <th className="p-2.5">Center Coordinates</th>
-                      <th className="p-2.5">Advisory Message</th>
-                      <th className="p-2.5">Created At</th>
-                      <th className="p-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#D8D3C7]">
-                    {alerts.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="p-6 text-center text-[#14231F]/50">
-                          No disaster alerts registered in system.
-                        </td>
-                      </tr>
-                    ) : (
-                      alerts.map((alert) => {
-                        const isActive = alert.active;
-                        const isCritical = alert.severity === 'CRITICAL';
-                        return (
-                          <tr
-                            key={alert.id}
-                            className={`hover:bg-[#FAF8F5]/80 transition-colors ${
-                              !isActive ? 'opacity-50 bg-[#F6F4EF]/40' : ''
-                            }`}
-                          >
-                            <td className="p-2.5">
-                              <div className="flex items-center gap-1.5">
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                    isCritical
-                                      ? 'bg-[#B23A2E] text-white'
-                                      : 'bg-[#C97A2B] text-white'
-                                  }`}
-                                >
-                                  {alert.severity}
-                                </span>
-                                <span className="text-[#14231F]/60 text-[10px]">#{alert.id}</span>
-                              </div>
-                            </td>
-                            <td className="p-2.5 font-bold text-[#14231F]">
-                              {alert.hazardType}
-                            </td>
-                            <td className="p-2.5">
-                              <div className="font-semibold text-[#14231F]">{alert.region}</div>
-                              <div className="text-[11px] text-[#14231F]/70">
-                                Radius: <span className="font-bold text-[#14231F]">{alert.radiusKm || 5.0} km</span>
-                              </div>
-                            </td>
-                            <td className="p-2.5 text-[#14231F]/80">
-                              {typeof alert.lat === 'number' ? alert.lat.toFixed(4) : alert.lat},{' '}
-                              {typeof alert.lng === 'number' ? alert.lng.toFixed(4) : alert.lng}
-                            </td>
-                            <td className="p-2.5 max-w-sm truncate text-[#14231F]/80" title={alert.message}>
-                              {alert.message}
-                            </td>
-                            <td className="p-2.5 text-[#14231F]/60 text-[11px]">
-                              {new Date(alert.createdAt).toLocaleString()}
-                            </td>
-                            <td className="p-2.5 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setFocusCoords([alert.lat, alert.lng]);
-                                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                                  }}
-                                  className="px-2 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] rounded text-[11px] text-[#14231F] font-semibold transition-colors"
-                                  title="Focus Incident Map"
-                                >
-                                  Map
-                                </button>
-                                {isActive ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeactivateAlert(alert.id)}
-                                    className="px-2.5 py-1 bg-[#B23A2E] hover:bg-[#972E24] text-white font-bold rounded text-[11px] transition-colors shadow-xs"
-                                    title="Deactivate broadcast and stand down warnings"
-                                  >
-                                    Deactivate
-                                  </button>
-                                ) : (
-                                  <>
-                                    <span className="px-2 py-1 bg-[#EFECE4] text-[#14231F]/50 rounded text-[10px] font-semibold">
-                                      STANDBY
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setConfirmDelete({ id: alert.id, label: `#${alert.id} ${alert.severity} ${alert.hazardType} (${alert.region})` })}
-                                      className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 rounded text-[10px] font-bold transition-colors"
-                                      title="Permanently delete this resolved alert"
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Aggregate Shelter Rollup Matrix */}
-            <AdminShelterRollup
-              shelters={shelters}
-              onSelectShelterCoords={(coords) => {
-                setFocusCoords(coords);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-            />
-          </div>
-        )}
+</div></details>
       </div>
 
       {/* Confirm Delete Alert Dialog */}
@@ -1055,11 +524,7 @@ export default function AdminDashboard() {
       {/* Broadcast Alert Modal */}
       {broadcastOpen && (
 
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto"
-        >
+        <ModalDialog label={broadcastMode === 'area' ? 'Send public alert to area' : 'Geospatial incident broadcast'} onClose={() => setBroadcastOpen(false)}>
           <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded max-w-lg w-full p-6 shadow-xl text-[#14231F]">
             <div className="flex items-center justify-between pb-3 border-b border-[#D8D3C7]">
               <div className="flex items-center gap-2 text-[#B23A2E]">
@@ -1110,16 +575,16 @@ export default function AdminDashboard() {
             <div className="mt-3 p-2.5 bg-[#14231F] text-[#F6F4EF] rounded space-y-1.5 font-mono">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-white/70 uppercase">Target Audience:</span>
-                <span className="text-[#4ADE80] font-bold text-[10px]">3 DELIVERY CHANNELS ARMED</span>
+                <span className="text-[#4ADE80] font-bold text-[10px]">{registryStats.channelsActive?.length ?? 0} CHANNELS AVAILABLE</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-center text-xs">
                 <div className="bg-white/10 p-1.5 rounded flex flex-col justify-center">
                   <div className="text-sm font-bold text-[#E5A93C]">{registryStats.totalPhones}</div>
-                  <div className="text-[10px] text-white/70">Phones via SMS</div>
+                  <div className="text-[10px] text-white/70">Registered phones</div>
                 </div>
                 <div className="bg-white/10 p-1.5 rounded flex flex-col justify-center">
                   <div className="text-sm font-bold text-[#4ADE80]">{registryStats.totalPushSubs}</div>
-                  <div className="text-[10px] text-white/70">Web Push Subscribers</div>
+                  <div className="text-[10px] text-white/70">Registered push devices</div>
                 </div>
               </div>
               <div className="text-[10px] text-white/60 text-center">
@@ -1135,7 +600,7 @@ export default function AdminDashboard() {
                     Target Alert Region / Zone
                   </label>
                   <select
-                    id="area-broadcast-region-select"
+                    aria-label="Target Alert Region / Zone" id="area-broadcast-region-select"
                     value={areaBroadcastRegion}
                     onChange={(e) => setAreaBroadcastRegion(e.target.value)}
                     className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono focus:outline-none focus:border-[#14231F]"
@@ -1149,7 +614,7 @@ export default function AdminDashboard() {
                     <option value="Rudraprayag - Valley Confluence">Rudraprayag - Valley Confluence</option>
                   </select>
                   <p className="text-[10px] text-[#14231F]/60 mt-1 font-mono">
-                    Fans out SMS + Web Push to all phones & devices registered for this area (or nationwide).
+                    Publishes to the live feed. SMS and push depend on configured providers; registered recipients are not delivery receipts.
                   </p>
                 </div>
 
@@ -1232,17 +697,19 @@ export default function AdminDashboard() {
             ) : (
               /* GEOSPATIAL INCIDENT BROADCAST FORM */
               <form onSubmit={handleBroadcastAlert} className="mt-4 space-y-3.5">
+                {broadcastError && <p role="alert" className="text-sm text-red-700">{broadcastError}</p>}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-mono uppercase text-[#14231F]/80 mb-1">
                       Hazard Type
                     </label>
                     <select
-                      value={alertForm.hazardType}
+                      aria-label="Hazard Type" value={alertForm.hazardType}
                       onChange={(e) => setAlertForm({ ...alertForm, hazardType: e.target.value })}
                       className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                     >
                       <option value="LANDSLIDE">LANDSLIDE</option>
+                      <option value="ADVISORY">General advisory</option>
                       <option value="FLOOD">FLOOD</option>
                       <option value="EARTHQUAKE">EARTHQUAKE</option>
                       <option value="FIRE">FIRE</option>
@@ -1254,7 +721,7 @@ export default function AdminDashboard() {
                       Severity Tier
                     </label>
                     <select
-                      value={alertForm.severity}
+                      aria-label="Severity Tier" value={alertForm.severity}
                       onChange={(e) => setAlertForm({ ...alertForm, severity: e.target.value })}
                       className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                     >
@@ -1271,7 +738,7 @@ export default function AdminDashboard() {
                   <input
                     type="text"
                     required
-                    value={alertForm.region}
+                    aria-label="Region / Sector Name" value={alertForm.region}
                     onChange={(e) => setAlertForm({ ...alertForm, region: e.target.value })}
                     className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                   />
@@ -1286,7 +753,7 @@ export default function AdminDashboard() {
                       type="number"
                       step="0.0001"
                       required
-                      value={alertForm.lat}
+                      aria-label="Center Latitude" value={alertForm.lat}
                       onChange={(e) => setAlertForm({ ...alertForm, lat: e.target.value })}
                       className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                     />
@@ -1299,7 +766,7 @@ export default function AdminDashboard() {
                       type="number"
                       step="0.0001"
                       required
-                      value={alertForm.lng}
+                      aria-label="Center Longitude" value={alertForm.lng}
                       onChange={(e) => setAlertForm({ ...alertForm, lng: e.target.value })}
                       className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs font-mono"
                     />
@@ -1356,7 +823,7 @@ export default function AdminDashboard() {
                   <textarea
                     rows={3}
                     required
-                    value={alertForm.message}
+                    aria-label="Public Advisory Message" value={alertForm.message}
                     onChange={(e) => setAlertForm({ ...alertForm, message: e.target.value })}
                     className="w-full p-2 bg-[#FFFFFF] border border-[#D8D3C7] rounded text-xs focus:outline-none focus:border-[#14231F]"
                   />
@@ -1382,7 +849,7 @@ export default function AdminDashboard() {
               </form>
             )}
           </div>
-        </div>
+        </ModalDialog>
       )}
 
       {/* Offline & SMS Simulation Drawer */}

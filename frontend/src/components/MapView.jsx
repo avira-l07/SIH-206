@@ -1,8 +1,13 @@
+import { DISPATCHED_STATUSES, ACTION_LABELS } from '../services/sosWorkflow';
 import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { SOI_NORTHERN_BOUNDARY } from '../data/soiBoundary';
-import { Check, ShieldCheck, Phone, MapPin, Sliders, AlertTriangle } from 'lucide-react';
+import { Check } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { isManualOffline } from '../services/offlineQueue';
+import { mapScope, validMapPoint, saveMapReference, readMapReference, clearMapReference, offlineReadiness } from '../services/offlineMap';
 
 // Fix for default Leaflet icon paths in bundlers
 delete L.Icon.Default.prototype._getIconUrl;
@@ -121,7 +126,7 @@ const shelterRedIcon = createCustomIcon('#B23A2E', '#F6F4EF', '⌂');
 function MapFocusController({ center, zoom }) {
   const map = useMap();
   useEffect(() => {
-    if (center && center[0] && center[1]) {
+    if (center && validMapPoint({lat:center[0],lng:center[1]})) {
       map.flyTo(center, zoom || 13, { duration: 1.2 });
     }
   }, [center, zoom, map]);
@@ -129,13 +134,13 @@ function MapFocusController({ center, zoom }) {
 }
 
 // Bounds helper to fit all incidents dynamically on the map
-function MapBoundsController({ triggerFit, incidents = [] }) {
+function MapBoundsController({ triggerFit, incidents = [], autoFit = true }) {
   const map = useMap();
   const initialFittedRef = React.useRef(false);
 
   // Auto-fit on initial load once incidents arrive
   useEffect(() => {
-    if (incidents.length > 0 && !initialFittedRef.current) {
+    if (autoFit && incidents.length > 0 && !initialFittedRef.current) {
       const points = incidents
         .filter((i) => i && typeof i.lat === 'number' && typeof i.lng === 'number')
         .map((i) => [i.lat, i.lng]);
@@ -146,7 +151,7 @@ function MapBoundsController({ triggerFit, incidents = [] }) {
         initialFittedRef.current = true;
       }
     }
-  }, [incidents, map]);
+  }, [incidents, map, autoFit]);
 
   // Explicit trigger (e.g. FIT ALL INCIDENTS button)
   useEffect(() => {
@@ -160,6 +165,30 @@ function MapBoundsController({ triggerFit, incidents = [] }) {
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12, duration: 1.0 });
     }
   }, [triggerFit, incidents, map]);
+  return null;
+}
+
+function MapViewTracker({ onChange }) {
+  const map = useMap();
+  useEffect(() => {
+    const track = () => { const center = map.getCenter(); onChange({center:{lat:center.lat,lng:center.lng},zoom:map.getZoom()}); };
+    track(); map.on('moveend zoomend',track); return () => {map.off('moveend zoomend',track);};
+  }, [map,onChange]);
+  return null;
+}
+
+function CoordinateGrid() {
+  const map = useMap();
+  useEffect(() => {
+    const Grid = L.GridLayer.extend({ createTile(coords) {
+      const tile = document.createElement('div');
+      const center = map.unproject(L.point((coords.x + 0.5) * 256,(coords.y + 0.5) * 256),coords.z);
+      tile.style.cssText = 'background:#F6F4EF;border:1px solid #D8D3C7;display:flex;align-items:center;justify-content:center;font:11px monospace;color:#797469';
+      tile.textContent = `${center.lat.toFixed(3)}, ${center.lng.toFixed(3)}`; return tile;
+    }});
+    const grid = new Grid({ attribution:'Coordinate reference grid — no road imagery' }); grid.addTo(map);
+    return () => {map.removeLayer(grid);};
+  }, [map]);
   return null;
 }
 
@@ -178,7 +207,7 @@ const REGION_COORDINATES = {
 const MAP_LAYERS = {
   voyager: {
     id: 'voyager',
-    name: 'Tactical (SOI Aligned)',
+    name: 'Tactical Street Map',
     url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap',
     subdomains: 'abcd',
@@ -209,42 +238,65 @@ const MAP_LAYERS = {
 };
 
 export default function MapView({
-  alerts = [],
+  alerts: liveAlerts = [],
   sosRequests = [],
-  shelters = [],
-  hazardReports = [],
+  shelters: liveShelters = [],
+  hazardReports: liveHazards = [],
   userCoords,
   focusCoords,
   onAssignSOS,
+  canClaimSOS = true,
+  actionsBusy = false,
   onResolveSOS,
+  currentUserId,
   onConfirmHazard,
   onViewSupplies,
   userRole,
   mode = 'authenticated', // 'authenticated' | 'public'
 }) {
+  const { user } = useAuth();
+  const scope = mapScope(user,mode);
+  const [reference,setReference] = React.useState(() => readMapReference(localStorage,scope));
+  const [mapNotice,setMapNotice] = React.useState(''), [readiness,setReadiness] = React.useState(null);
+  const viewport = React.useRef(null);
+  const trackView = React.useCallback(view => {viewport.current=view;},[]);
   const [fitTrigger, setFitTrigger] = React.useState(0);
-  const [selectedLayer, setSelectedLayer] = React.useState('voyager');
+  const [selectedLayer, setSelectedLayer] = React.useState(!navigator.onLine || isManualOffline() ? 'grid' : 'voyager');
   const [selectedRegionJump, setSelectedRegionJump] = React.useState('');
   const [activeCenter, setActiveCenter] = React.useState(null);
-  const [isOffline, setIsOffline] = React.useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  const [isOffline, setIsOffline] = React.useState(!navigator.onLine || isManualOffline());
+  const usingReference = isOffline && Boolean(reference);
+  const alerts = (usingReference ? reference.alerts : liveAlerts).filter(validMapPoint);
+  const shelters = (usingReference ? reference.shelters : liveShelters).filter(validMapPoint);
+  const hazardReports = (usingReference ? reference.hazardReports : liveHazards).filter(validMapPoint);
+  React.useEffect(() => {setReference(readMapReference(localStorage,scope));},[scope]);
+  React.useEffect(() => {if(isOffline)setSelectedLayer('grid');},[isOffline]);
+  const checkReadiness = async () => {try {setReadiness(await offlineReadiness());}catch {setReadiness({shell:false,tiles:0,reason:'Browser storage could not be inspected'});} };
+  const saveReference = () => {
+    try {setReference(saveMapReference(localStorage,scope,{alerts:liveAlerts,shelters:liveShelters,hazardReports:mode==='public'?[]:liveHazards},viewport.current));setMapNotice('Map reference saved. Capacity and hazards will become stale during an outage.');checkReadiness();}
+    catch {setMapNotice('Map could not be saved. Free browser storage and retry.');}
+  };
 
   React.useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
+    const handleOnline = () => setIsOffline(!navigator.onLine || isManualOffline());
+    const handleOffline = handleOnline;
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('sih:connectivity-changed',handleOnline);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('sih:connectivity-changed',handleOnline);
     };
   }, []);
 
   // Dynamic initial center: focusCoords -> userCoords -> first active alert/shelter -> national fallback [20.5937, 78.9629]
   const defaultCenter = React.useMemo(() => {
-    if (focusCoords && focusCoords[0] && focusCoords[1]) {
+    if (usingReference) return [reference.view.center.lat,reference.view.center.lng];
+    if (focusCoords && validMapPoint({lat:focusCoords[0],lng:focusCoords[1]})) {
       return focusCoords;
     }
-    if (userCoords?.lat && userCoords?.lng) {
+    if (validMapPoint(userCoords)) {
       return [userCoords.lat, userCoords.lng];
     }
     if (alerts.length > 0 && typeof alerts[0].lat === 'number') {
@@ -254,7 +306,7 @@ export default function MapView({
       return [shelters[0].lat, shelters[0].lng];
     }
     return [30.3165, 78.0322]; // Default: Uttarakhand Disaster Operations Center
-  }, [focusCoords, userCoords, alerts, shelters]);
+  }, [focusCoords, userCoords, alerts, shelters, usingReference, reference]);
 
   const allIncidents = React.useMemo(() => {
     if (mode === 'public') {
@@ -280,25 +332,25 @@ export default function MapView({
         (pos) => {
           setActiveCenter([pos.coords.latitude, pos.coords.longitude]);
         },
-        (err) => alert('Could not retrieve GPS location: ' + err.message),
+        () => setMapNotice('Could not get GPS. Allow location access or use the saved markers and coordinates.'),
         { enableHighAccuracy: true, timeout: 8000 }
       );
     } else {
-      alert('Geolocation is not supported by your browser.');
+      setMapNotice('GPS is unavailable in this browser. Use the saved markers and coordinates.');
     }
   };
 
   return (
     <div className="w-full h-full min-h-[420px] rounded border border-[#D8D3C7] overflow-hidden relative shadow-xs isolate">
       {/* Tactical Map Toolbar (Region Jump, Fit All Incidents & Live GPS) */}
-      <div className="absolute top-2 right-2 z-[450] flex flex-wrap items-center gap-1.5 bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded p-1.5 shadow-md font-mono text-xs">
+      <div className="absolute top-2 right-2 left-12 sm:left-auto z-[450] flex flex-wrap items-center gap-1.5 bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded p-1.5 shadow-md font-mono text-xs">
         <button
           type="button"
           onClick={handleLocateMe}
           className="px-2.5 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F] border border-[#D8D3C7] rounded text-[11px] font-bold flex items-center gap-1 transition-transform active:scale-95"
           title="Recenter to my live browser GPS position"
         >
-          <span>📍 MY GPS LOCATION</span>
+          <span>My location</span>
         </button>
 
         <button
@@ -307,26 +359,29 @@ export default function MapView({
           className="px-2.5 py-1 bg-[#14231F] text-white hover:bg-black rounded text-[11px] font-bold flex items-center gap-1 transition-transform active:scale-95"
           title="Zoom to fit all active alerts, shelters, and incidents"
         >
-          <span>⛶ FIT ALL INCIDENTS</span>
+          <span>Show all</span>
         </button>
 
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-[#14231F]/70 font-semibold">LAYER:</span>
+<details className="relative"><summary className="cursor-pointer px-2 py-1 text-xs">Map options</summary><div className="absolute right-0 top-full mt-2 rounded-lg bg-white p-3 shadow-md border space-y-2 min-w-[220px]">        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-[#14231F]/70 font-semibold">Map style</span>
           <select
+            aria-label="Map style"
             value={selectedLayer}
             onChange={(e) => setSelectedLayer(e.target.value)}
             className="bg-[#F6F4EF] border border-[#D8D3C7] rounded px-1.5 py-1 text-[11px] text-[#14231F] font-mono focus:outline-none focus:border-[#14231F]"
           >
-            <option value="voyager">🗺️ Tactical (SOI Aligned)</option>
+            <option value="voyager">Street map</option>
             <option value="topo">🏔️ Topographic Relief</option>
             <option value="satellite">🛰️ Satellite Aerial</option>
-            <option value="humanitarian">🚑 Humanitarian OSM</option>
+            <option value="osm">OpenStreetMap streets</option>
+            <option value="grid">Offline coordinate grid</option>
           </select>
         </div>
 
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-[#14231F]/70 font-semibold">JUMP:</span>
+          <span className="text-[10px] text-[#14231F]/70 font-semibold">Region</span>
           <select
+            aria-label="Map region"
             value={selectedRegionJump}
             onChange={(e) => handleRegionJump(e.target.value)}
             className="bg-[#F6F4EF] border border-[#D8D3C7] rounded px-1.5 py-1 text-[11px] text-[#14231F] font-mono focus:outline-none focus:border-[#14231F]"
@@ -342,42 +397,48 @@ export default function MapView({
             <option value="kerala">Kerala / Wayanad</option>
           </select>
         </div>
+        <div className="border-t pt-2 space-y-2 text-xs"><button type="button" disabled={isOffline} onClick={saveReference} className="rounded border px-2 py-1 disabled:opacity-50">Save map reference</button><button type="button" onClick={checkReadiness} className="rounded border px-2 py-1">Check offline readiness</button>
+          <p>Saved shelter locations and hazard markers work on the offline coordinate grid. Previously viewed street tiles may be cached; other imagery requires internet.</p>
+          {reference && <><p>Saved: {new Date(reference.savedAt).toLocaleString()}</p><button type="button" onClick={() => {clearMapReference(localStorage,scope);setReference(null);setMapNotice('Saved map reference removed from this account.');}} className="underline">Remove saved map reference</button></>}
+          {readiness && <p role="status">App shell: {readiness.shell && readiness.controlled ? 'ready for offline reload' : 'not ready'} · {readiness.assets || 0} app assets cached · {readiness.tiles} viewed tiles cached. {readiness.missing ? `${readiness.missing} app assets missing.` : ''} {readiness.reason || ''}</p>}
+        </div></div></details>
       </div>
 
+      {mapNotice&&<div role="status" className="absolute bottom-24 left-2 right-2 z-[451] rounded-lg border border-[#D8D3C7] bg-white p-3 shadow-md text-sm flex flex-wrap justify-between gap-2"><p>{mapNotice}</p><button type="button" className="underline" onClick={()=>setMapNotice('')}>Dismiss</button></div>}
       {/* Offline Tile Notice (Labeled Limitation) */}
       {isOffline && (
         <div className="absolute bottom-2 left-2 right-2 z-[450] bg-[#14231F]/90 text-[#F6F4EF] border border-[#D8D3C7] rounded px-3 py-1.5 text-xs font-mono flex items-center justify-between shadow-lg">
           <div className="flex items-center gap-2">
             <span className="text-amber-400 font-bold">⚠️ OFFLINE MODE:</span>
-            <span>Map tiles limited to cached areas, live markers remain active.</span>
+            <span>{usingReference ? `Saved reference from ${new Date(reference.savedAt).toLocaleString()}.` : 'Last loaded markers; no saved reference.'} Capacity and hazards are stale.</span>
           </div>
         </div>
       )}
 
-      {/* Survey of India Official Compliance Badge */}
-      <div className="absolute bottom-2 left-2 z-[450] bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded px-2.5 py-1 text-[10px] font-mono text-[#14231F] shadow-xs flex items-center gap-1.5 pointer-events-none">
+      {/* Reference boundary legend */}
+      <div className={`absolute ${isOffline ? 'bottom-20' : 'bottom-2'} left-2 z-[450] bg-[#FFFFFF]/95 backdrop-blur-xs border border-[#D8D3C7] rounded px-2.5 py-1 text-[10px] font-mono text-[#14231F] shadow-xs flex items-center gap-1.5 pointer-events-none`}>
         <span className="inline-block w-2 h-2 rounded-full bg-[#2E6E4E] animate-pulse"></span>
-        <span className="font-bold text-[#14231F]">🇮🇳 Survey of India Boundary Aligned</span>
+        <span className="font-bold text-[#14231F]">Reference boundary overlay</span>
       </div>
 
       <MapContainer
         center={defaultCenter}
-        zoom={9}
+        zoom={usingReference ? reference.view.zoom : 9}
         minZoom={5}
         maxBounds={[[6.0, 68.0], [37.6, 97.5]]}
         maxBoundsViscosity={0.85}
         scrollWheelZoom={true}
         className="w-full h-full"
       >
-        <TileLayer
+        {selectedLayer === 'grid' ? <CoordinateGrid/> : <TileLayer
           key={selectedLayer}
           attribution={MAP_LAYERS[selectedLayer].attribution}
           url={MAP_LAYERS[selectedLayer].url}
           subdomains={MAP_LAYERS[selectedLayer].subdomains || 'abc'}
           maxZoom={MAP_LAYERS[selectedLayer].maxZoom || 19}
-        />
+        />}
 
-        {/* Official Survey of India (SOI) Northern Boundary */}
+        {/* Reference Northern Boundary */}
         <Polyline
           positions={SOI_NORTHERN_BOUNDARY}
           pathOptions={{
@@ -388,15 +449,16 @@ export default function MapView({
           }}
         />
 
-        <MapFocusController center={activeCenter || focusCoords} />
-        <MapBoundsController triggerFit={fitTrigger} incidents={allIncidents} />
+        <MapViewTracker onChange={trackView}/>
+        <MapFocusController center={activeCenter || focusCoords || (usingReference ? defaultCenter : null)} zoom={usingReference ? reference.view.zoom : undefined}/>
+        <MapBoundsController triggerFit={fitTrigger} incidents={allIncidents} autoFit={!usingReference}/>
 
         {/* User Location Marker */}
         {userCoords && (
           <Marker position={[userCoords.lat, userCoords.lng]} icon={userLocationIcon}>
             <Popup>
               <div className="text-xs font-mono p-1">
-                <strong>YOUR CURRENT LOCATION</strong>
+                <strong>YOUR SAVED / LAST KNOWN LOCATION</strong>
                 <div>{userCoords.lat.toFixed(4)}° N, {userCoords.lng.toFixed(4)}° E</div>
               </div>
             </Popup>
@@ -522,7 +584,7 @@ export default function MapView({
 
                     {isObstruction && (
                       <div className="p-1.5 bg-red-50 border border-red-300 rounded text-[10px] font-mono text-red-900">
-                        <strong>⚠️ ROUTE OBSTRUCTION:</strong> Depth ({report.severityBenchmark}) blocks standard vehicle transit. Responders auto-diverted.
+                        <strong>⚠️ ROUTE OBSTRUCTION:</strong> Reported depth ({report.severityBenchmark}) may block vehicle access. Verify a safe route before travel.
                       </div>
                     )}
 
@@ -552,7 +614,7 @@ export default function MapView({
                       Reported by: <strong>{report.userName}</strong>
                     </div>
 
-                    {report.confidenceTier !== 'RED' && report.confidenceTier !== 'RESOLVED' && onConfirmHazard && (
+                    {!isOffline && report.confidenceTier !== 'RED' && report.confidenceTier !== 'RESOLVED' && onConfirmHazard && (
                       <div className="pt-2 border-t border-[#D8D3C7]">
                         <button
                           type="button"
@@ -574,7 +636,7 @@ export default function MapView({
         {/* SOS Distress Calls (Authenticated Responders Only) */}
         {mode !== 'public' && sosRequests.map((sos) => {
           let icon = sosPendingIcon;
-          if (sos.status === 'IN_PROGRESS') icon = sosProgressIcon;
+          if (DISPATCHED_STATUSES.includes(sos.status)) icon = sosProgressIcon;
           if (sos.status === 'RESOLVED') icon = sosResolvedIcon;
 
           const isUrgent = sos.priority === 'URGENT' || (sos.vulnerabilityTags && sos.vulnerabilityTags.length > 0);
@@ -616,22 +678,24 @@ export default function MapView({
                   )}
 
                   {/* Responders Action Controls */}
-                  {(userRole === 'VOLUNTEER' || userRole === 'ADMIN') && (
+                  {!isOffline && (userRole === 'VOLUNTEER' || userRole === 'ADMIN') && (
                     <div className="pt-2 border-t border-[#D8D3C7] flex gap-2">
-                      {(sos.status === 'PENDING' || sos.status === 'VERIFIED') && onAssignSOS && (
+                      {(sos.status === 'VERIFIED' || (sos.status === 'PENDING' && userRole === 'ADMIN')) && onAssignSOS && (
                         <button
+                          disabled={actionsBusy || !canClaimSOS}
                           onClick={() => onAssignSOS(sos.id)}
                           className="w-full py-1 bg-[#14231F] text-[#F6F4EF] font-display font-semibold text-xs rounded hover:bg-black"
                         >
                           ACCEPT DISPATCH
                         </button>
                       )}
-                      {sos.status === 'IN_PROGRESS' && onResolveSOS && (
+                      {DISPATCHED_STATUSES.includes(sos.status) && (userRole === 'ADMIN' || sos.assignedVolunteerId === currentUserId) && onResolveSOS && (
                         <button
+                          disabled={actionsBusy}
                           onClick={() => onResolveSOS(sos.id)}
                           className="w-full py-1 bg-[#2E6E4E] text-white font-display font-semibold text-xs rounded hover:bg-[#24583e]"
                         >
-                          MARK RESOLVED
+                          {ACTION_LABELS[sos.status]}
                         </button>
                       )}
                     </div>
@@ -668,6 +732,7 @@ export default function MapView({
                   </div>
 
                   <div className="font-bold text-sm text-[#14231F]">{shelter.name}</div>
+                  {isOffline && <p className="font-semibold text-amber-800">Saved reference — bed availability is unconfirmed.</p>}
                   <div className="text-[#14231F]/70 text-[11px]">{shelter.address}</div>
                   <div className="font-mono text-xs pt-1">
                     Capacity: <strong>{shelter.currentOccupancy} / {shelter.capacity}</strong>
@@ -684,7 +749,7 @@ export default function MapView({
                       Contact: <a href={`tel:${shelter.contact}`} className="underline">{shelter.contact}</a>
                     </div>
                   )}
-                  {mode === 'public' ? (
+                  {mode === 'public' && !isOffline ? (
                     <a
                       href={`https://www.google.com/maps/dir/?api=1&destination=${shelter.lat},${shelter.lng}`}
                       target="_blank"
@@ -694,7 +759,7 @@ export default function MapView({
                       🧭 GET GPS DIRECTIONS ↗
                     </a>
                   ) : (
-                    onViewSupplies && (
+                    !isOffline && onViewSupplies && (
                       <button
                         type="button"
                         onClick={() => onViewSupplies(shelter)}

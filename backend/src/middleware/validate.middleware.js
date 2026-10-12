@@ -74,7 +74,7 @@ function validateAlert(req, res, next) {
       error: `Invalid severity '${severity}'. Allowed: ${SEVERITIES.join(', ')}`
     });
   }
-  if (!region || !isValidCoords(lat, lng) || !message) {
+  if (typeof region !== 'string' || !region.trim() || !isValidCoords(lat, lng) || typeof message !== 'string' || !message.trim()) {
     return res.status(400).json({
       error: 'Missing or invalid required fields: region, lat (−90 to 90), lng (−180 to 180), message'
     });
@@ -97,7 +97,7 @@ function validateSOS(req, res, next) {
   const resolvedUserName = userName || (req.user ? req.user.name : 'Anonymous Citizen');
   req.body.userName = String(resolvedUserName).slice(0, 100);
 
-  if (!isValidCoords(lat, lng) || !message) {
+  if (!isValidCoords(lat, lng) || typeof message !== 'string' || !message.trim()) {
     return res.status(400).json({
       error: 'Missing or invalid required SOS fields: lat (−90 to 90), lng (−180 to 180), message'
     });

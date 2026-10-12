@@ -1,57 +1,31 @@
-# SIH26206: 1-Page Pitch, Rubric Defense & Judges FAQ
+# SIH26206 pitch and evidence
 
-## 📌 Executive Summary
-**Problem Statement SIH26206:** Development of an AI/IoT-Powered Real-Time Disaster Management Platform.
+SIH26206 is AICTE Student Innovation in Disaster Management. The available statement concerns technology for mitigation and planning before, during and after disasters. Mandatory AI/IoT and a numerical scoring rubric have not been verified. The official SIH statement endpoint returned HTTP 403 during research; the college listing and secondary mirrors support this broad scope. Recheck the official brief before submission.
 
-During catastrophic events, emergency response fails not due to lack of goodwill, but due to **information disorder**:
-1. **Unverified crowdsourced reports** cause rescue teams to waste hours investigating outdated or fabricated rumors.
-2. **Distress queues treat all calls identically**, leaving dialysis patients, infants, and pregnant mothers lost in thousands of requests.
-3. **Shelters become secondary disasters** when evacuees arrive at full or water-depleted safe havens.
-4. **Total data blackout** paralyzes response when cellular and internet backbones fail.
+## Focused proposal
 
-**Our Solution:** A resilient, field-tested web platform engineered specifically for chaotic, low-connectivity conditions, combining automated multi-hazard risk alerting, vulnerability triage, a ground-truth confidence engine, and zero-internet SMS telemetry.
+DisasterShield connects a household help request to an accountable responder, an accepted resource booking, a shelter arrival and subsequent recovery work. Start with one proposed flood-response pilot in Dehradun. This is a proposed pilot, not evidence of a field-tested deployment or official NDMA integration.
 
----
+## Demonstrable implementation
 
-## 🏆 Key Architectural Differentiators
+- Before: English/Hindi household checklist, account-specific offline draft, completed-drill recording and reviewed corridor preparation.
+- During: verified SOS dispatch, acknowledgment deadlines and escalation, stage history, owner-accepted resource bookings, stock/occupancy accounting, shelter intake, consented human-reviewed family suggestions, delivery evidence and authenticated offline replay.
+- After: assigned damage/aid/recovery cases with closure evidence; export actual dispatch, acknowledgment and completion samples and labeled warning outcomes.
 
-| Traditional Disaster Apps | Our SIH26206 Platform |
-|---|---|
-| Accepts unverified social media photos | **Anti-Misinformation Camera Gate**: Native camera capture only (`capture="environment"`), blocking gallery uploads |
-| Single unverified report triggers panic | **Confidence-Tier Engine**: Dynamic promotions (`GREY` $\rightarrow$ `AMBER` $\rightarrow$ `RED`) via proximity peer verification and trusted municipal signatures |
-| Flat first-come-first-served SOS queue | **Vulnerability-Based Triage**: 1-tap medical/infant tags auto-pin urgent cases to the top of a 4-column Kanban board |
-| Responders duplicate each other's work | **Assignment Locking**: 409 Conflict protocol locks coordinates to one field team upon claim |
-| Static shelter address lists | **5-Resource Readiness Audits & Auto-Redirect**: If a shelter status turns `RED`, the system automatically redirects evacuees to the nearest viable green haven |
-| Hard crash on cellular outage | **Offline Telemetry Gateway**: Low-bandwidth raw SMS parser (`SHTR`, `SOS`) with local browser queueing and monotonic sync |
+## Accurate reviewer answers
 
----
+**Warning intelligence:** Deterministic rules provide severity scores, not probabilities. Live weather requires a configured provider. Custom telemetry and fallback weather are DEMO and produce no real external messages. Operator-labeled observations support evaluation but do not establish independently validated forecast accuracy.
 
-## 🛡️ Anticipated Judges Questions & Defense (Rubric Alignment)
+**Report trust:** Camera capture is a browser preference and cannot guarantee a fresh authentic photo. Proximity checks, one vote per account, review tiers and staff approval reduce abuse; they do not eliminate identity fraud or Sybil attacks.
 
-### 1. "How would your platform interface with physical IoT sensors, weather stations, or drones?"
-> **Our Answer:**
-> *"The platform accepts telemetry data (rainfall, water level, seismic readings) via a JSON HTTP endpoint (`/api/alerts/simulate`), designed to be compatible with real sensor gateways in a production deployment. No physical LoRaWAN hardware or network server integration is included in this submission — telemetry is currently simulated/demo data unless a real `OPENWEATHER_API_KEY` is configured, in which case live weather data is used."*
+**Reunification:** Name/age overlap ranks consented arrivals. Staff check evidence before confirming, can revoke mistakes and withdraw consent, and departure updates shelter status. No automatic identity or biometric matching is claimed.
 
-### 2. "Why did you use text-based matching rather than facial recognition for missing persons?"
-> **Our Answer:**
-> *"This was an intentional, responsible engineering decision. In real disaster zones, field cameras suffer from poor lighting, mud, and water distortion, which causes unacceptable false positive rates with facial recognition. Furthermore, storing and processing biometrics of vulnerable victims raises serious privacy and legal compliance concerns. Instead, we built instant attribute-based matching (name, age, distinctive features, and last-seen landmarks) synchronized directly with shelter intake rosters, which solves the immediate family reunification problem reliably without computational overhead."*
+**Connectivity:** A PWA queue buffers supported actions and replays idempotent account-bound batches. A provisioned local relay needs network access to its hub. A signed Twilio adapter can ingest SMS from uniquely verified account phones. Cellular SMS, provider access and an available gateway remain necessary. There is no Bluetooth mesh, HAM-radio modem, satellite link or physical LoRa gateway.
 
-### 3. "What prevents malicious users from spamming fake hazard reports?"
-> **Our Answer:**
-> *"We implement a three-layer trust moat: First, reports must be captured through the live device camera—pre-existing internet photos cannot be uploaded. Second, every new report is quarantined in the `GREY` (unverified) tier and will not trigger volunteer dispatch. Third, peer confirmations require unique user accounts and enforce a database-level `unique(hazard_report_id, confirming_user_id)` constraint to prevent sybil inflation. Only reports confirmed by multiple independent citizens or a verified municipal officer reach the `RED` tier."*
+**Routing:** Searches current operator-reviewed corridor geometry and excludes segments near specified recent confirmed flood reports. Endpoint connectors remain unreviewed. No route is invented when the network is absent/disconnected. Suggested routes do not prove safety.
 
-### 4. "How does the system work when the internet is completely dead?"
-> **Our Answer:**
-> *"When internet connectivity fails, our platform switches to low-bandwidth SMS/Ham-radio packet ingestion. We developed a fixed-syntax parser (`SHTR <id> F<pct> W<1|0> B<beds>` and `SOS <lat> <lng> <type> <tag>`) that decodes raw 160-character cellular SMS or radio telemetry packets and updates shelter readiness and emergency queues directly into the state machine. In the browser, an offline queue buffers user actions and replays them with monotonic timestamp ordering upon reconnection."*
+**Security:** Current roles, district boundaries, revocable sessions, TOTP/recovery codes, verified contacts, reset challenges, signed callbacks, encrypted secrets/recipients and shared quotas are implemented. Production still needs HTTPS, protected keys, reviewed migrations/retention, identity procedures and operational supervision.
 
----
+**Impact:** Show recorded sample counts and distributions, not fabricated lives saved, accuracy, improvements or official KPI compliance. Use [PILOT_PLAN.md](PILOT_PLAN.md) for baseline/outcome evidence and [GAP_UPGRADE.md](GAP_UPGRADE.md) for implementation/configuration status.
 
-## 📊 Live Verification Credentials for Judges
-
-- **Backend API Health Check:** `GET /api/health` $\rightarrow$ `200 OK`
-- **Automated Test Suite:** `node verify-endpoints.js` runs 9 automated verification tests across auth, triage, shelter audits, confidence tiering, SMS telemetry, and community mobilization.
-- **Seeded Demo Accounts:**
-  - Citizen: `citizen@sih.gov.in` / `password123`
-  - NDRF Volunteer: `volunteer@sih.gov.in` / `password123`
-  - Municipal Officer (Trusted): `trusted_officer@sih.gov.in` / `password123`
-  - Peer Confirmers: `confirmer1@sih.gov.in`, `confirmer2@sih.gov.in` / `password123`
+Statement sources: [college listing](https://pscmr.ac.in/PSCMR/sih/index.html), [SIH26206 mirror](https://sihone.pages.dev/ps/26206). [Official statements](https://sih.gov.in/sih2026PS) were unavailable to this audit. These sources do not establish a detailed numerical rubric.

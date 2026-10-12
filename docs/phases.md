@@ -70,23 +70,23 @@ This is your differentiator phase — most competing teams won't have this.
 Deployment guide and configurations are established; this phase is verified, tested, and demo-ready.
 - [x] Seed realistic demo data (a few active alerts, SOS requests including one vulnerability-tagged, shelters, 1-2 hazard reports at each confidence tier)
 - [x] UI pass: consistent styling, loading states, error handling
-- [x] Automated test suite: `node verify-endpoints.js` validates all endpoints, models, and transition logic
+- [x] Automated test suite: `npm test` in backend exercises isolated route, permission, workflow and concurrency regressions
 - [x] Write a 3-minute demo script (`docs/demo_script.md`): Login → Alert appears → SOS raised (show vulnerability tag jump the queue) → Hazard report confirmed live (grey→amber→red) → Shelter flips to red and redirects → Volunteer resolves
 - [x] Prepare 1-page problem/solution slide referencing the original SIH26206 brief, plus one slide listing deferred features (`docs/pitch_and_rubric.md`) — clearly labeled "future work"
-- [x] Check the actual SIH26206 evaluation rubric (`docs/pitch_and_rubric.md`). Prepared talking points on how real sensors/drones/IoT devices plug into the architecture.
+- [x] Review statement scope and distinguish implemented capabilities from proposed hardware and unmeasured field outcomes (`docs/pitch_and_rubric.md`). Official rubric verification remains pending.
 
 **Checkpoint:** Live local prototype and verification suite run cleanly, and the 3-minute script runs without errors.
 
 ## Stretch Phase (Implemented Ahead of Schedule!)
 - [x] Civilian Asset & Skill Mobilization — "I Have / I Can" listings (boats, 4x4s, generators, medics, HAM radio) with one-click direct dispatch contact
 - [x] Relief Supply-Demand Gap Mapping — inventory matrix per shelter tracking critical shortages (infant formula, insulin, drinking water)
-- [x] Missing Persons Registry — text/attribute-based matching (name/age/description) with automated shelter roster matches (Shipped in Sprint 1)
+- [x] Missing Persons Registry — search and manual status updates through `/api/missing-persons`; shelter intake and automatic roster matching remain pending.
 - [x] SMS ingestion simulation — fixed syntax parser (`SHTR <id> F<pct> W<1|0> B<beds>` and `SOS <lat> <lng> <type> <tags>`) with simulated outage queueing and batch sync
 - [x] Route Obstruction Rendering — spatial obstruction perimeter rings rendered dynamically for `WAIST` and `SUBMERGED` hazard reports (Shipped in Sprint 2)
 - [ ] Basic ML risk score (train a tiny scikit-learn model on synthetic data) (Covered by rule-based IoT risk engine per PRD Section 3.6)
 
 ### Strategic Prioritization Rationale (Decision 0.5)
-In Sprint 2, Route Obstruction Rendering was paired with Structured Water-Depth Benchmarks (`ANKLE`, `KNEE`, `WAIST`, `SUBMERGED`) because structured physical depth data directly dictates route navigability and evacuation corridor safety on the live map. Missing Persons intake & bulletin matching had already been built in the backend in Sprint 1 (`/api/missing-persons`); coupling depth benchmarks to spatial obstruction rendering yielded maximum field-operational fidelity and high visual clarity during live judging demos.
+In Sprint 2, Route Obstruction Rendering was paired with Structured Water-Depth Benchmarks (`ANKLE`, `KNEE`, `WAIST`, `SUBMERGED`) because structured physical depth data directly dictates route navigability and evacuation corridor safety on the live map. The missing-person bulletin supports search and manual status updates (`/api/missing-persons`); shelter intake and automatic matching are not implemented; coupling depth benchmarks to spatial obstruction rendering yielded maximum field-operational fidelity and high visual clarity during live judging demos.
 
 ## Deferred — do not attempt in this timeline (mention only as future work in the pitch)
 - Facial-recognition matching for missing persons (accuracy & biometric privacy concerns — see `docs/pitch_and_rubric.md`)

@@ -1,4 +1,5 @@
 const prisma = require('../db');
+const { broadcastAssetChanged } = require('../sockets/socketHandler');
 
 function calculateHaversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371; // Earth radius in km
@@ -37,6 +38,7 @@ async function getAssets(req, res) {
   try {
     const { type, assetType, availableOnly } = req.query;
     const where = {};
+    if (req.user.role !== 'ADMIN' && !(req.user.role === 'VOLUNTEER' && req.user.trusted)) where.userId = req.user.id;
     if (type) where.type = type.toUpperCase();
     if (assetType) where.assetType = assetType.toUpperCase();
     if (availableOnly === 'true') where.available = true;
@@ -52,7 +54,7 @@ async function getAssets(req, res) {
     res.status(200).json({ assets });
   } catch (error) {
     console.error('Error fetching civilian assets:', error);
-    res.status(500).json({ error: 'Failed to fetch civilian assets' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch civilian assets' });
   }
 }
 
@@ -82,6 +84,7 @@ async function registerAsset(req, res) {
     const asset = await prisma.civilianAsset.create({
       data: {
         userId,
+        region: require('../services/field.service').regionKey(req.body.region || req.user.region),
         ownerName: String(ownerName).trim().slice(0, 100),
         contact: String(contact).trim().slice(0, 50),
         type: resolvedType,
@@ -94,10 +97,11 @@ async function registerAsset(req, res) {
       },
     });
 
+    broadcastAssetChanged(asset);
     res.status(201).json({ message: 'Civilian asset registered for emergency mobilization', asset });
   } catch (error) {
     console.error('Error registering asset:', error);
-    res.status(500).json({ error: 'Failed to register civilian asset' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to register civilian asset' });
   }
 }
 
@@ -123,15 +127,16 @@ async function toggleAssetAvailability(req, res) {
       return res.status(403).json({ error: 'You are not authorized to update this resource availability' });
     }
 
-    const updated = await prisma.civilianAsset.update({
-      where: { id: assetId },
-      data: { available: Boolean(available) },
-    });
+    if(asset.activeReservationId) return res.status(409).json({error:'Release the active booking before changing availability'});
+    const changed = await prisma.civilianAsset.updateMany({where:{id:assetId,activeReservationId:null,available:asset.available},data:{available:Boolean(available)}});
+    if(!changed.count)return res.status(409).json({error:"Resource changed; refresh before updating"});
+    const updated=await prisma.civilianAsset.findUnique({where:{id:assetId}});
 
+    broadcastAssetChanged(updated);
     res.status(200).json({ message: 'Asset status updated', asset: updated });
   } catch (error) {
     console.error('Error updating asset:', error);
-    res.status(500).json({ error: 'Failed to update asset availability' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to update asset availability' });
   }
 }
 
@@ -141,8 +146,9 @@ async function toggleAssetAvailability(req, res) {
 async function getAssetSuggestions(req, res) {
   try {
     const { lat, lng, hazardType } = req.query;
-    const userLat = parseFloat(lat);
-    const userLng = parseFloat(lng);
+    const userLat = Number(lat);
+    const userLng = Number(lng);
+    if (!lat?.trim() || !lng?.trim() || !Number.isFinite(userLat) || !Number.isFinite(userLng) || Math.abs(userLat) > 90 || Math.abs(userLng) > 180) return res.status(400).json({ error: 'Valid incident coordinates are required' });
 
     const assets = await prisma.civilianAsset.findMany({
       where: { available: true },
@@ -176,10 +182,10 @@ async function getAssetSuggestions(req, res) {
       return 0;
     });
 
-    res.status(200).json({ suggestions: calculated });
+    res.status(200).json({ suggestions: calculated.filter(asset => asset.distanceKm <= 2), radiusKm: 2 });
   } catch (error) {
     console.error('Error fetching asset suggestions:', error);
-    res.status(500).json({ error: 'Failed to fetch asset suggestions' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch asset suggestions' });
   }
 }
 

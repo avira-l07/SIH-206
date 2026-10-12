@@ -1,12 +1,20 @@
+import { useSocket } from '../context/SocketContext';
 import React, { useState, useEffect } from 'react';
-import { UserCheck, Search, Plus, Phone, MapPin, CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import { UserCheck, Search, Plus, Phone, CheckCircle2, X } from 'lucide-react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 export default function MissingPersonsModal({ isOpen, onClose }) {
+  const { user } = useAuth();
+  const { socket } = useSocket();
+  const canUpdate = user?.role === 'ADMIN' || (user?.role === 'VOLUNTEER' && user.trusted);
+  const [updatingId, setUpdatingId] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [reports, setReports] = useState([]);
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
+    region:user?.serviceRegion||user?.region||'',
     reportedByName: '',
     contactPhone: '',
     fullName: '',
@@ -18,27 +26,44 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
   const [submitting, setSubmitting] = useState(false);
 
   const loadReports = async () => {
+    setLoadError('');
     try {
       const res = await api.get('/missing-persons');
       setReports(res.data.reports || []);
     } catch (err) {
-      console.error('Failed to load missing persons', err);
+      setLoadError(err.response?.data?.error || 'Could not load records. Please retry.');
     }
   };
 
   useEffect(() => {
-    if (isOpen) loadReports();
-  }, [isOpen]);
+    if (!isOpen) return;
+    loadReports();
+    socket?.on('missing:changed', loadReports);
+    socket?.on('connect', loadReports);
+    return () => { socket?.off('missing:changed', loadReports); socket?.off('connect', loadReports); };
+  }, [isOpen, socket]);
+
+  const updateStatus = async (person, status) => {
+    let shelterName = null;
+    if (status === 'SAFE_AT_SHELTER') { shelterName = window.prompt('Shelter name where this person was located:', person.shelterName || ''); if (!shelterName?.trim()) return; }
+    setUpdatingId(person.id);
+    try {
+      const { data } = await api.patch(`/missing-persons/${person.id}/status`, { status, shelterName });
+      setReports(previous => previous.map(report => report.id === person.id ? data.report : report));
+    } catch (error) { alert(error.response?.data?.error || 'Could not update this bulletin.'); }
+    finally { setUpdatingId(null); }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await api.post('/missing-persons', form);
-      setReports((prev) => [res.data.report, ...prev]);
+      const res = await api.post('/missing-persons', { ...form, age: form.age === '' ? null : Number(form.age) });
+      setReports((prev) => [res.data.report, ...prev.filter(r => r.id !== res.data.report.id)]);
       setShowForm(false);
       setForm({
-        reportedByName: '',
+        region:user?.serviceRegion||user?.region||'',
+    reportedByName: '',
         contactPhone: '',
         fullName: '',
         age: '',
@@ -71,7 +96,8 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
       className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs"
     >
       <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded max-w-2xl w-full p-5 shadow-2xl text-[#14231F] flex flex-col max-h-[90vh]">
-        {/* Header */}
+  {loadError && <p role="alert" className="p-3 text-red-700">{loadError} <button className="underline" onClick={loadReports}>Retry</button></p>}
+      {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-[#D8D3C7]">
           <div className="flex items-center gap-2">
             <UserCheck className="w-5 h-5 text-[#B23A2E]" />
@@ -80,12 +106,13 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
                 Missing Persons Registry & Shelter Intake Matching
               </h2>
               <p className="text-[11px] font-mono text-[#14231F]/70">
-                Text/attribute matching against municipal shelter intake rosters (Per SIH PRD Scope)
+                Search filed reports and record where a person has been located.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close missing-person registry"
             className="p-1 bg-[#EFECE4] rounded text-xs hover:bg-[#D8D3C7]"
           >
             <X className="w-4 h-4" />
@@ -116,12 +143,13 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
 
         {/* Form */}
         {showForm && (
-          <form onSubmit={handleCreate} className="p-3.5 bg-[#F6F4EF] border border-[#D8D3C7] rounded mt-2 space-y-2 text-xs">
+          <form onSubmit={handleCreate} className="p-3.5 bg-[#F6F4EF] border border-[#D8D3C7] rounded mt-2 space-y-2 text-xs"><label className="block text-xs">District<input aria-label="Missing person district" maxLength={200} value={form.region} onChange={e=>setForm({...form,region:e.target.value})} className="block w-full rounded border p-2"/></label>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-[10px] font-mono font-bold mb-0.5">Missing Person Full Name</label>
                 <input
                   type="text"
+                  aria-label="Missing person full name"
                   required
                   placeholder="e.g. Aakash Deshmukh"
                   value={form.fullName}
@@ -134,6 +162,9 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
                   <label className="block text-[10px] font-mono font-bold mb-0.5">Age</label>
                   <input
                     type="number"
+                    aria-label="Age"
+                    min="0"
+                    max="130"
                     placeholder="14"
                     value={form.age}
                     onChange={(e) => setForm({ ...form, age: e.target.value })}
@@ -160,6 +191,7 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
                 <label className="block text-[10px] font-mono font-bold mb-0.5">Last Seen Location / Landmark</label>
                 <input
                   type="text"
+                  aria-label="Last seen location"
                   required
                   placeholder="e.g. Kurla East railway bridge"
                   value={form.lastSeenLocation}
@@ -168,18 +200,24 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-mono font-bold mb-0.5">Reporting Relative & Phone</label>
+                <label className="block text-[10px] font-mono font-bold mb-0.5">Reporting Person Name</label>
                 <input
                   type="text"
                   required
-                  placeholder="Suresh Deshmukh (+91 98200 11998)"
+                  aria-label="Reporting person name"
+                  placeholder="e.g. Suresh Deshmukh"
                   value={form.reportedByName}
                   onChange={(e) => {
-                    setForm({ ...form, reportedByName: e.target.value, contactPhone: e.target.value });
+                    setForm({ ...form, reportedByName: e.target.value });
                   }}
                   className="w-full p-1.5 bg-white border border-[#D8D3C7] rounded text-xs"
                 />
               </div>
+            </div>
+
+            <div>
+              <label htmlFor="missing-contact" className="block text-[10px] font-mono font-bold mb-0.5">Contact Phone</label>
+              <input id="missing-contact" type="tel" required value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} className="w-full p-1.5 bg-white border border-[#D8D3C7] rounded text-xs" />
             </div>
 
             <div>
@@ -217,7 +255,7 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <h4 className="font-display font-bold text-sm text-[#14231F]">{person.fullName}</h4>
-                      {person.age && (
+                      {person.age != null && (
                         <span className="text-[10px] font-mono bg-[#EFECE4] px-1.5 py-0.2 rounded border border-[#D8D3C7]">
                           {person.age} yrs • {person.gender}
                         </span>
@@ -229,7 +267,7 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
                             : 'bg-[#B23A2E]/15 border-[#B23A2E]/30 text-[#B23A2E]'
                         }`}
                       >
-                        {isSafe ? '✓ SAFE AT SHELTER' : '● ACTIVE SEARCH'}
+                        {isSafe ? '✓ SAFE AT SHELTER' : person.status === 'LOCATED' ? '✓ LOCATED' : '● ACTIVE SEARCH'}
                       </span>
                     </div>
 
@@ -252,6 +290,7 @@ export default function MissingPersonsModal({ isOpen, onClose }) {
                   </div>
 
                   <div className="text-right text-[10px] font-mono text-[#14231F]/60 flex flex-col items-end gap-1 flex-shrink-0">
+                    {canUpdate && <select aria-label={'Status for ' + person.fullName} value={person.status} disabled={updatingId === person.id} onChange={event => updateStatus(person, event.target.value)} className="border p-1 rounded"><option value="MISSING">Missing</option><option value="LOCATED">Located</option><option value="SAFE_AT_SHELTER">Safe at shelter</option></select>}
                     <div>Contact: {person.contactPhone}</div>
                     <a
                       href={`tel:${person.contactPhone}`}

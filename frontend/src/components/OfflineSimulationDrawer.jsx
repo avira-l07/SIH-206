@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Radio,
   Wifi,
@@ -14,6 +14,8 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import api from '../services/api';
+import ModalDialog from './ModalDialog';
+import { useAuth } from '../context/AuthContext';
 import {
   enqueueAction,
   getQueuedActions,
@@ -24,14 +26,16 @@ import {
 } from '../services/offlineQueue';
 
 export default function OfflineSimulationDrawer({ onDataChanged }) {
+  const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(isManualOffline());
   const [queuedItems, setQueuedItems] = useState([]);
-  const [smsInput, setSmsInput] = useState('SHTR 104 F0 W1 B15');
+  const [smsInput, setSmsInput] = useState(user?.role === 'CITIZEN' ? 'SOS 30.3165 78.0322 FLOOD none Emergency distress report' : 'SHTR 104 F0 W1 B15');
   const [ingesting, setIngesting] = useState(false);
   const [flushing, setFlushing] = useState(false);
   const [logs, setLogs] = useState([]);
   const [lastResult, setLastResult] = useState(null);
+  const [shelters,setShelters] = useState([]), [sampleShelter,setSampleShelter] = useState('');
 
   const refreshQueue = async () => {
     const items = await getQueuedActions();
@@ -39,14 +43,15 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
     setIsOffline(isManualOffline());
   };
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
+    if (user?.role === 'CITIZEN') return;
     try {
       const res = await api.get('/offline/logs');
       setLogs(res.data.logs || []);
     } catch (err) {
       console.warn('Failed to load offline logs from backend', err.message);
     }
-  };
+  }, [user?.role]);
 
   // Sync with IndexedDB offline queue on mount and drawer open
   useEffect(() => {
@@ -61,8 +66,9 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
     if (isOpen) {
       loadLogs();
       refreshQueue();
+      if(user?.role!=='CITIZEN') api.get('/shelters').then(({data})=>setShelters((data.shelters||[]).filter(shelter=>!user?.serviceRegion||shelter.region?.trim().toLowerCase()===user.serviceRegion))).catch(()=>setShelters([]));
     }
-  }, [isOpen]);
+  }, [isOpen, loadLogs, user?.role, user?.serviceRegion]);
 
   const handleToggleOutage = async () => {
     const nextState = !isOffline;
@@ -73,7 +79,8 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
     if (!nextState) {
       setFlushing(true);
       try {
-        await flushQueue();
+        const result = await flushQueue();
+      setLastResult({ status: result.error || result.failedCount ? 'ERROR' : 'SUCCESS', message: result.error || result.errors?.join('; ') || result.reason || result.message || 'No actions waiting to sync' });
         await refreshQueue();
         await loadLogs();
         if (onDataChanged) onDataChanged();
@@ -92,11 +99,11 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
     try {
       const res = await api.post('/offline/sms-ingest', {
         payload: smsInput.trim(),
-        sourceNode: 'Cellular Carrier Gateway (2G GSM)',
+        sourceNode: 'Browser SMS syntax test',
       });
       setLastResult({
         status: 'SUCCESS',
-        message: 'Cellular Carrier Ingested: Telemetry parsed and synchronized to platform',
+        message: 'Parsed report submitted to the server. No cellular SMS or radio transmission was performed.',
         applied: res.data.result,
       });
       await loadLogs();
@@ -112,12 +119,13 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
   };
 
   const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const deviceSmsUri = `sms:112${isIOS ? '&' : '?'}body=${encodeURIComponent(smsInput.trim())};`;
+  const deviceSmsUri = `sms:${import.meta.env.VITE_SMS_GATEWAY_NUMBER || ''}${isIOS ? '&' : '?'}body=${encodeURIComponent(smsInput.trim())}`;
 
   const handleManualFlush = async () => {
     setFlushing(true);
     try {
-      await flushQueue();
+      const result = await flushQueue();
+      setLastResult({ status: result.error || result.failedCount || result.skipped ? 'ERROR' : 'SUCCESS', message: result.error || result.errors?.join('; ') || result.reason || result.message || 'No actions waiting to sync' });
       await refreshQueue();
       await loadLogs();
       if (onDataChanged) onDataChanged();
@@ -176,7 +184,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
         {isOffline && (
           <div className="px-2.5 py-1 bg-[#B23A2E] text-white text-xs font-mono font-bold rounded flex items-center gap-1.5 shadow-md animate-pulse">
             <WifiOff className="w-3.5 h-3.5" />
-            <span>STAGE OUTAGE ACTIVE ({queuedItems.length} QUEUED)</span>
+            <span>Offline test · {queuedItems.length} saved</span>
           </div>
         )}
 
@@ -184,20 +192,16 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
           id="open-offline-sim-drawer-btn"
           onClick={() => setIsOpen(!isOpen)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-[#14231F] hover:bg-black text-[#F6F4EF] font-mono text-xs rounded border border-[#D8D3C7] shadow-md transition-colors"
-          title="Open Offline Relay & SMS Gateway Simulator"
+          title="Review saved reports and connection options"
         >
           <Terminal className="w-3.5 h-3.5 text-[#2E6E4E]" />
-          <span>OFFLINE & RELAY TOOLS {queuedItems.length > 0 ? `(${queuedItems.length})` : ''}</span>
+          <span>Offline tools {queuedItems.length > 0 ? `(${queuedItems.length})` : ''}</span>
         </button>
       </div>
 
       {/* Slide-over Drawer / Modal */}
       {isOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs"
-        >
+        <ModalDialog wide label="Offline tools" onClose={() => setIsOpen(false)}>
           <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded-t sm:rounded max-w-xl w-full p-5 shadow-2xl text-[#14231F] space-y-4 max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-2 border-b border-[#D8D3C7]">
@@ -205,15 +209,16 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                 <Terminal className="w-5 h-5 text-[#14231F]" />
                 <div>
                   <h3 className="font-display font-bold text-sm uppercase">
-                    Local Hub Relay & Offline PWA Tools
+                    Saved reports and connection
                   </h3>
                   <p className="text-[10px] font-mono text-[#14231F]/60">
-                    Zero-internet resilience: Service Worker cache + IndexedDB persistent queue
+                    Saved reports await synchronization; cellular SMS requires coverage.
                   </p>
                 </div>
               </div>
               <button
                 type="button"
+                aria-label="Close offline tools"
                 onClick={() => setIsOpen(false)}
                 className="p-1 bg-[#EFECE4] rounded text-xs hover:bg-[#D8D3C7]"
               >
@@ -231,7 +236,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                     <Wifi className="w-4 h-4 text-[#2E6E4E]" />
                   )}
                   <span className="font-mono text-xs font-bold uppercase text-[#14231F]">
-                    Stage Outage Override: {isOffline ? 'OFFLINE (FORCED)' : 'ONLINE (NORMAL)'}
+                    Offline test mode: {isOffline ? 'ON' : 'OFF'}
                   </span>
                 </div>
 
@@ -245,14 +250,14 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                       : 'bg-[#B23A2E] text-white hover:bg-[#992c21]'
                   }`}
                 >
-                  {isOffline ? 'RESTORE CONNECTIVITY' : 'TRIGGER OUTAGE SIMULATION'}
+                  {isOffline ? 'Exit offline test' : 'Try offline test'}
                 </button>
               </div>
 
               <p className="text-[11px] font-mono text-[#14231F]/70">
                 {isOffline
-                  ? `Device is locked offline. ${queuedItems.length} actions held in local IndexedDB storage. Click restore to flush.`
-                  : 'Live network link active. Transactions broadcast immediately via WebSocket and local relay hub.'}
+                  ? `${queuedItems.length} reports are saved on this device. Exit the test to synchronize when the server is reachable.`
+                  : 'Offline test mode is off. Successful server receipts confirm synchronization.'}
               </p>
             </div>
 
@@ -262,7 +267,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-[#C97A2B]">
                     <Database className="w-3.5 h-3.5" />
-                    <span>LOCAL INDEXEDDB PERSISTED QUEUE ({queuedItems.length})</span>
+                    <span>Saved reports awaiting sync ({queuedItems.length})</span>
                   </div>
                   {!isOffline && (
                     <button
@@ -297,33 +302,36 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
               <div className="flex items-center justify-between">
                 <label className="text-xs font-mono font-bold uppercase text-[#14231F] flex items-center gap-1.5">
                   <Radio className="w-3.5 h-3.5 text-[#C97A2B]" />
-                  Simulated 2G SMS / Ham Radio Telemetry Box
+                  SMS report tools
                 </label>
                 <span className="text-[10px] font-mono text-[#14231F]/60">SYNTAX PARSER</span>
               </div>
 
               {/* Sample syntax quick-fill chips */}
               <div className="flex flex-wrap gap-1.5">
+                {user?.role!=='CITIZEN' && <><select aria-label="Shelter for SMS example" value={sampleShelter} onChange={e=>setSampleShelter(e.target.value)} className="max-w-full border rounded p-1 text-xs"><option value="">Choose shelter</option>{shelters.map(shelter=><option key={shelter.id} value={shelter.id}>{shelter.name}</option>)}</select>
                 <button
                   type="button"
-                  onClick={() => setSmsInput('SHTR 104 F0 W1 B15')}
+                  disabled={!sampleShelter}
+                  onClick={() => setSmsInput(`SHTR ${sampleShelter} W1`)}
                   className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] rounded text-[10px] font-mono"
                 >
-                  Quick: SHTR 104 (B15 Free)
+                  Example: water available
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSmsInput('SHTR 101 F95 W0 B2')}
+                  disabled={!sampleShelter}
+                  onClick={() => setSmsInput(`SHTR ${sampleShelter} W0`)}
                   className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] rounded text-[10px] font-mono"
                 >
-                  Quick: SHTR 101 (F95% Depleted)
-                </button>
+                  Example: water unavailable
+                </button></>}
                 <button
                   type="button"
-                  onClick={() => setSmsInput('SOS 19.0726 72.8845 FLOOD dialysis Patient trapped')}
+                  onClick={() => setSmsInput(`SOS ${user?.lat ?? '<latitude>'} ${user?.lng ?? '<longitude>'} FLOOD none Describe the emergency`)}
                   className="px-2 py-0.5 bg-[#EFECE4] hover:bg-[#D8D3C7] border border-[#D8D3C7] rounded text-[10px] font-mono"
                 >
-                  Quick: SOS (Dialysis Beacon)
+                  Example: SOS — verify location
                 </button>
               </div>
 
@@ -331,10 +339,12 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
               <form onSubmit={handleSendSMS} className="flex gap-2">
                 <input
                   type="text"
+                  aria-label="SMS report text"
+                  maxLength={2000}
                   required
                   value={smsInput}
                   onChange={(e) => setSmsInput(e.target.value)}
-                  placeholder="e.g. SHTR 104 F0 W1 B15"
+                  placeholder="SOS latitude longitude FLOOD none Help needed"
                   className="flex-1 p-2 bg-[#F6F4EF] border border-[#D8D3C7] rounded text-xs font-mono focus:outline-none focus:border-[#14231F]"
                 />
                 <button
@@ -362,12 +372,12 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
                 <button
                   type="button"
                   onClick={handleDirectGatewayIngest}
-                  disabled={ingesting}
+                  disabled={ingesting || isOffline || !navigator.onLine}
                   className="px-2.5 py-1.5 bg-[#EFECE4] hover:bg-[#D8D3C7] text-[#14231F] border border-[#D8D3C7] rounded text-[11px] font-mono font-bold flex items-center gap-1.5 transition-colors"
-                  title="Simulate cellular tower receiving this SMS and feeding it into the platform"
+                  title="Submit a parsed report over the internet; this does not transmit a cellular SMS"
                 >
                   <Radio className="w-3.5 h-3.5 text-[#2E6E4E]" />
-                  <span>📡 Simulate Carrier Gateway Ingest</span>
+                  <span>Submit parsed report online</span>
                 </button>
               </div>
 
@@ -438,7 +448,7 @@ export default function OfflineSimulationDrawer({ onDataChanged }) {
               </div>
             </div>
           </div>
-        </div>
+        </ModalDialog>
       )}
     </>
   );

@@ -20,6 +20,8 @@ const bcrypt = require('bcryptjs');
 const prisma = new PrismaClient();
 
 async function runUttarakhandMigration() {
+  if (process.env.NODE_ENV === 'production' || process.env.ENABLE_DEMO !== 'true' || process.env.RESET_DEMO_DATA !== 'true') throw new Error('Demo reset requires ENABLE_DEMO=true and RESET_DEMO_DATA=true in development');
+  await prisma.supplyDistribution.deleteMany();
   console.log('🏔️  Starting ONE-TIME Uttarakhand demo migration...');
 
   // SAFETY ASSERTION: Refuse to execute if code tries to delete users
@@ -66,7 +68,7 @@ async function runUttarakhandMigration() {
       region: 'Rishikesh - Garhwal Hub',
       lat: 30.0869,
       lng: 78.2676,
-      trusted: false,
+      trusted: true,
     },
     {
       name: 'Uttarakhand State Disaster Management Authority (USDMA EOC)',

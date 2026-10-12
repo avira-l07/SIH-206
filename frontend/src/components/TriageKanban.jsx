@@ -1,19 +1,9 @@
 import React, { useState } from 'react';
-import {
-  ShieldAlert,
-  Clock,
-  MapPin,
-  Phone,
-  Lock,
-  CheckCircle2,
-  AlertTriangle,
-  ArrowRight,
-  XCircle,
-  Stethoscope,
-  Activity,
-} from 'lucide-react';
+import { ShieldAlert, Clock, MapPin, Phone, Lock, CheckCircle2, AlertTriangle, Stethoscope, Activity } from 'lucide-react';
 import { calculateDistanceKm } from '../services/haversine';
 import api from '../services/api';
+import AssignmentControls from './AssignmentControls';
+import useResponderRoster from '../hooks/useResponderRoster';
 
 const COLUMNS = [
   {
@@ -44,7 +34,7 @@ const COLUMNS = [
     id: 'RESOLVED',
     statuses: ['RESOLVED'],
     label: '5. RESCUED / RESOLVED',
-    desc: 'Safe & closure confirmed',
+    desc: 'Resolved; citizen confirmation tracked separately',
   },
 ];
 
@@ -79,11 +69,13 @@ export default function TriageKanban({
   const [triageDropdownId, setTriageDropdownId] = useState(null);
 
   const isAdmin = currentUser?.role === 'ADMIN';
+  const { responders, rosterError: responderError } = useResponderRoster(isAdmin);
+  const [selectedResponder, setSelectedResponder] = useState({});
 
   const handleVerify = async (sosId) => {
     setUpdatingId(sosId);
     try {
-      const res = await api.patch(`/sos/${sosId}/verify`);
+      const res = await api.patch(`/sos/${sosId}/verify`, {});
       if (onSOSUpdated) onSOSUpdated(res.data.sos);
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to verify ticket');
@@ -95,7 +87,7 @@ export default function TriageKanban({
   const handleAssign = async (sosId) => {
     setUpdatingId(sosId);
     try {
-      const res = await api.patch(`/sos/${sosId}/assign`);
+      const res = await api.patch(`/sos/${sosId}/assign`, isAdmin ? { volunteerId: Number(selectedResponder[sosId]) } : {});
       if (onSOSUpdated) onSOSUpdated(res.data.sos);
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to assign ticket');
@@ -330,7 +322,7 @@ export default function TriageKanban({
                               </span>
                             )}
                             <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-[#EFECE4] text-[#14231F]/80">
-                              ±{sos.coordsAccuracy ? `${Math.round(sos.coordsAccuracy)}m` : '10m'}
+                              {sos.coordsAccuracy != null ? `±${Math.round(sos.coordsAccuracy)}m` : 'Accuracy unknown'}
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -356,6 +348,7 @@ export default function TriageKanban({
                           </div>
                         )}
 
+                        {(isAdmin || isAssignedToMe) && <AssignmentControls ticket={sos} currentUser={currentUser} responders={responders} onUpdated={onSOSUpdated} />}
                         {/* ACTION CONTROLS // ROLE & STAGE GATED */}
                         <div className="pt-1 flex flex-col gap-1">
                           {/* Column 1: REPORTED (PENDING) */}
@@ -374,18 +367,7 @@ export default function TriageKanban({
                                   >
                                     Verify
                                   </button>
-                                  <button
-                                    type="button"
-                                    disabled={updatingId === sos.id}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleAssign(sos.id);
-                                    }}
-                                    className="flex-1 py-1 bg-[#14231F] hover:bg-black text-white font-display font-semibold text-[10px] rounded"
-                                    title="Fast-path claim for Control Room Admin"
-                                  >
-                                    Claim
-                                  </button>
+
                                 </>
                               ) : (
                                 <button
@@ -417,17 +399,18 @@ export default function TriageKanban({
 
                           {/* Column 2: VERIFIED (VERIFIED) */}
                           {sos.status === 'VERIFIED' && (
-                            <div className="flex gap-1">
+                            <div className="flex flex-wrap gap-1">
+                              {isAdmin && <><select aria-label={`Responder for SOS ${sos.id}`} value={selectedResponder[sos.id] || ''} onClick={e => e.stopPropagation()} onChange={e => setSelectedResponder(prev => ({ ...prev, [sos.id]: e.target.value }))} className="w-full text-xs border rounded p-1"><option value="">Select approved volunteer</option>{responders.map(v => <option key={v.id} value={v.id} disabled={v.onDuty === false}>{v.name} · {v.onDuty === true ? 'on duty' : v.onDuty === false ? 'off duty' : 'availability not set'} · {v.activeAssignments} active · {v.locationFresh ? 'recent location' : 'location not current'}</option>)}</select>{responderError && <span role="alert">{responderError}</span>}</>}
                               <button
                                 type="button"
-                                disabled={updatingId === sos.id}
+                                disabled={updatingId === sos.id || (!isAdmin && currentUser?.onDuty === false) || (isAdmin && (!selectedResponder[sos.id] || !responders.some(r => r.id === Number(selectedResponder[sos.id]) && r.onDuty !== false)))}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleAssign(sos.id);
                                 }}
                                 className="flex-1 py-1 bg-[#14231F] hover:bg-black text-white font-display font-semibold text-[10px] rounded shadow-xs"
                               >
-                                Claim Dispatch
+                                {isAdmin ? 'Assign Responder' : currentUser?.onDuty === false ? 'Start your shift first' : 'Claim Dispatch'}
                               </button>
 
                               {isAdmin && (

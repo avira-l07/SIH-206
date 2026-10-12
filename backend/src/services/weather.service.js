@@ -18,7 +18,7 @@ const REGION_COORDINATES = {
 };
 
 async function getWeatherData(region = 'Mumbai', customLat = null, customLng = null) {
-  const coords = (customLat && customLng)
+  const coords = (typeof customLat === 'number' && typeof customLng === 'number')
     ? { lat: customLat, lng: customLng }
     : (REGION_COORDINATES[region] || REGION_COORDINATES['Mumbai']);
 
@@ -40,9 +40,9 @@ async function getWeatherData(region = 'Mumbai', customLat = null, customLng = n
         region,
         lat: coords.lat,
         lng: coords.lng,
-        temp: data.main?.temp || 30,
-        humidity: data.main?.humidity || 85,
-        windSpeed: data.wind?.speed ? data.wind.speed * 3.6 : 25, // km/h
+        temp: data.main?.temp ?? 30,
+        humidity: data.main?.humidity ?? 85,
+        windSpeed: data.wind?.speed != null ? data.wind.speed * 3.6 : 25, // km/h
         rain1h: data.rain ? (data.rain['1h'] || 0) : 0,
         condition: data.weather?.[0]?.main || 'Clouds',
         isLive: true,

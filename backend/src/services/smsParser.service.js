@@ -1,4 +1,5 @@
-const prisma = require('../db');
+const { transaction } = require('./transaction.service');
+const { HAZARD_TYPES } = require('../constants');
 const { logShelterEventInternal } = require('../controllers/shelter.controller');
 const { formatSOS } = require('../controllers/sos.controller');
 const { broadcastSOSCreated } = require('../sockets/socketHandler');
@@ -13,11 +14,12 @@ const { broadcastSOSCreated } = require('../sockets/socketHandler');
  * Example: "SOS 19.0726 72.8845 FLOOD dialysis Ground floor flooded"
  */
 function parseSMSPayload(payload = '') {
-  if (!payload || typeof payload !== 'string') {
+  if (!payload || typeof payload !== 'string' || payload.length > 2000) {
     return { success: false, error: 'Empty or invalid SMS payload string' };
   }
 
   const trimmed = payload.trim();
+  if (!trimmed) return { success: false, error: 'Empty SMS payload' };
   const tokens = trimmed.split(/\s+/);
 
   if (tokens.length === 0) {
@@ -28,12 +30,12 @@ function parseSMSPayload(payload = '') {
 
   // 1. Shelter audit command (SHTR)
   if (command === 'SHTR') {
-    if (tokens.length < 2) {
+    if (tokens.length < 3) {
       return { success: false, error: 'Malformed SHTR syntax. Expected: SHTR <id> [F<pct>] [W<1|0>] [B<freeBeds>]' };
     }
 
-    const shelterId = parseInt(tokens[1]);
-    if (isNaN(shelterId)) {
+    const shelterId = Number(tokens[1]);
+    if (!Number.isSafeInteger(shelterId) || shelterId <= 0) {
       return { success: false, error: `Invalid shelter ID: "${tokens[1]}"` };
     }
 
@@ -43,16 +45,13 @@ function parseSMSPayload(payload = '') {
 
     for (let i = 2; i < tokens.length; i++) {
       const token = tokens[i].toUpperCase();
-      if (token.startsWith('F')) {
-        const val = parseInt(token.substring(1));
-        if (!isNaN(val)) occupancyPct = Math.max(0, Math.min(100, val));
-      } else if (token.startsWith('W')) {
-        const val = token.substring(1);
-        waterOk = val === '1' || val === 'TRUE';
-      } else if (token.startsWith('B')) {
-        const val = parseInt(token.substring(1));
-        if (!isNaN(val)) bedsFree = Math.max(0, val);
-      }
+      if (/^F\d+$/.test(token) && Number(token.slice(1)) <= 100) {
+        occupancyPct = Number(token.slice(1));
+      } else if (/^W[01]$/.test(token)) {
+        waterOk = token === 'W1';
+      } else if (/^B\d+$/.test(token) && Number(token.slice(1)) <= 100000) {
+        bedsFree = Number(token.slice(1));
+      } else return { success: false, error: 'Invalid shelter telemetry field: ' + token };
     }
 
     return {
@@ -74,14 +73,15 @@ function parseSMSPayload(payload = '') {
       return { success: false, error: 'Malformed SOS syntax. Expected: SOS <lat> <lng> [hazardType] [tags] [message]' };
     }
 
-    const lat = parseFloat(tokens[1]);
-    const lng = parseFloat(tokens[2]);
+    const lat = Number(tokens[1]);
+    const lng = Number(tokens[2]);
 
-    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
       return { success: false, error: `Invalid GPS coordinates in SOS payload: "${tokens[1]}, ${tokens[2]}" (must be within lat −90..90, lng −180..180)` };
     }
 
     const hazardType = tokens[3] ? tokens[3].toUpperCase() : 'FLOOD';
+    if (!HAZARD_TYPES.includes(hazardType)) return { success: false, error: 'Invalid SOS hazard type' };
     const tag = tokens[4] ? tokens[4].toLowerCase() : '';
     const message = tokens.slice(5).join(' ') || `Emergency distress beacon via SMS gateway (${hazardType})`;
 
@@ -92,7 +92,7 @@ function parseSMSPayload(payload = '') {
         lat,
         lng,
         hazardType,
-        vulnerabilityTags: tag,
+        vulnerabilityTags: tag === 'none' ? '' : tag,
         message,
       },
       raw: trimmed,
@@ -113,55 +113,36 @@ async function applyParsedPayload(parsedResult, sourceNode = 'SMS Gateway', extr
   const { type, data, raw } = parsedResult;
 
   if (type === 'SHELTER_AUDIT') {
-    const shelter = await prisma.shelter.findUnique({ where: { id: data.shelterId } });
-    if (!shelter) {
-      throw new Error(`Shelter ID #${data.shelterId} not found in municipal registry`);
-    }
-
-    let targetOccupancy = shelter.currentOccupancy;
-    if (data.bedsFree != null) {
-      targetOccupancy = Math.max(0, shelter.capacity - data.bedsFree);
-    } else if (data.occupancyPct != null) {
-      targetOccupancy = Math.round((data.occupancyPct / 100) * shelter.capacity);
-    }
-
-    const deltaOccupancy = targetOccupancy - shelter.currentOccupancy;
-
-    // Apply delta and optional waterOk via single internal event-logging write path
-    const { event, shelter: updated } = await logShelterEventInternal({
+    const result = await logShelterEventInternal({
       shelterId: data.shelterId,
-      deltaOccupancy,
-      waterOk: typeof data.waterOk === 'boolean' ? data.waterOk : null,
-      reason: `SMS Telemetry Ingestion: ${raw}`,
+      occupancyPct: data.occupancyPct,
+      bedsFree: data.bedsFree,
+      waterOk: data.waterOk,
+      reason: 'SMS Telemetry Ingestion: ' + raw,
       operatorName: sourceNode || 'SMS Gateway',
-    });
-
-    // Log to offline sync log
-    const log = await prisma.offlineSyncLog.create({
-      data: {
+      idempotencyKey: extraMeta.idempotencyKey || null,
+      syncLog: {
+        idempotencyKey: extraMeta.idempotencyKey || null,
         rawPayload: raw,
-        parsedData: JSON.stringify({
-          action: 'SHELTER_AUDIT',
-          ...data,
-          appliedStatus: updated.status,
-          eventId: event.id,
-          ...extraMeta,
-        }),
+        parsedData: JSON.stringify({ action: 'SHELTER_AUDIT', ...data, ...extraMeta }),
         sourceNode,
         syncedAt: new Date(),
       },
     });
-
-    return { type: 'SHELTER_AUDIT', record: updated, event, log };
+    return { type: 'SHELTER_AUDIT', record: result.shelter, event: result.event, log: result.log };
   }
 
   if (type === 'SOS_TRIGGER') {
     const priority = data.vulnerabilityTags ? 'URGENT' : 'NORMAL';
 
-    const sos = await prisma.sOSRequest.create({
+    const { sos, log } = await transaction(async tx => {
+    const sender=extraMeta.userId ? await tx.user.findUnique({where:{id:extraMeta.userId}}) : null;
+    const sos = await tx.sOSRequest.create({
       data: {
-        userName: 'SMS Ingested Civilian Beacon',
-        userPhone: '+91 SMS-GATEWAY',
+        userId: extraMeta.userId || null,
+        userName: sender?.name || 'SMS civilian report',
+        region:require('./field.service').regionKey(sender?.region),
+        userPhone:sender?.phone || null,
         lat: data.lat,
         lng: data.lng,
         hazardType: data.hazardType,
@@ -172,10 +153,10 @@ async function applyParsedPayload(parsedResult, sourceNode = 'SMS Gateway', extr
       },
     });
 
-    const formatted = formatSOS(sos);
-
-    const log = await prisma.offlineSyncLog.create({
+    await require('./activity.service').recordRescueEvent(tx, sos, null, 'CREATED');
+    const log = await tx.offlineSyncLog.create({
       data: {
+        idempotencyKey: extraMeta.idempotencyKey || null,
         rawPayload: raw,
         parsedData: JSON.stringify({ action: 'SOS_TRIGGER', ...data, sosId: sos.id, ...extraMeta }),
         sourceNode,
@@ -183,6 +164,9 @@ async function applyParsedPayload(parsedResult, sourceNode = 'SMS Gateway', extr
       },
     });
 
+    return { sos, log };
+    });
+    const formatted = formatSOS(sos);
     broadcastSOSCreated(formatted);
     return { type: 'SOS_TRIGGER', record: formatted, log };
   }

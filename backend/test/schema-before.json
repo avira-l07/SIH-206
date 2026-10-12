@@ -1,0 +1,311 @@
+[
+  {
+    "table": "Alert",
+    "columns": [
+      "id",
+      "hazardType",
+      "severity",
+      "region",
+      "lat",
+      "lng",
+      "radiusKm",
+      "message",
+      "active",
+      "createdAt",
+      "deletedAt"
+    ],
+    "rows": 4,
+    "hash": "d0b0bbd94246335f1f875cc2f1097405476ca7e8dc7db0f5cdf99daa13f87e0e"
+  },
+  {
+    "table": "CivilianAsset",
+    "columns": [
+      "id",
+      "userId",
+      "ownerName",
+      "contact",
+      "type",
+      "title",
+      "description",
+      "lat",
+      "lng",
+      "available",
+      "createdAt",
+      "assetType"
+    ],
+    "rows": 5,
+    "hash": "d2b3c0acab870b9c0e42122da2437d5164c09dfb4eb11bbd7ffe21f1bd7d6120"
+  },
+  {
+    "table": "HazardConfirmation",
+    "columns": [
+      "id",
+      "hazardReportId",
+      "confirmingUserId",
+      "voteType",
+      "createdAt",
+      "updatedAt"
+    ],
+    "rows": 4,
+    "hash": "d75d5f4c415518f63c7730df6f885f33091ffbf857f9bda0845250b6dcdff719"
+  },
+  {
+    "table": "HazardReport",
+    "columns": [
+      "id",
+      "userId",
+      "userName",
+      "lat",
+      "lng",
+      "hazardNote",
+      "photoUrl",
+      "confidenceTier",
+      "confirmationsCount",
+      "createdAt",
+      "severityBenchmark"
+    ],
+    "rows": 5,
+    "hash": "647743bcf1ab9c03d44e8c060289378886460a8a8e28f25f37441b6c4b14c2e4"
+  },
+  {
+    "table": "MissingPerson",
+    "columns": [
+      "id",
+      "reportedByName",
+      "contactPhone",
+      "fullName",
+      "age",
+      "gender",
+      "lastSeenLocation",
+      "lat",
+      "lng",
+      "description",
+      "status",
+      "shelterName",
+      "createdAt",
+      "updatedAt"
+    ],
+    "rows": 0,
+    "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+    "table": "Notification",
+    "columns": [
+      "id",
+      "userId",
+      "title",
+      "kind",
+      "sosId",
+      "readAt",
+      "createdAt"
+    ],
+    "rows": 0,
+    "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+    "table": "OfflineSyncLog",
+    "columns": [
+      "id",
+      "rawPayload",
+      "parsedData",
+      "sourceNode",
+      "receivedAt",
+      "syncedAt",
+      "idempotencyKey"
+    ],
+    "rows": 1,
+    "hash": "99430814b5e143d03bac32c9e9f18d4d83ce4d699b3e7a1aed9cdfb0bbabe97e"
+  },
+  {
+    "table": "PhoneRegistration",
+    "columns": [
+      "id",
+      "phoneNumber",
+      "region",
+      "createdAt"
+    ],
+    "rows": 15,
+    "hash": "c4686104307ff51deeaefd0205d9621abb7ef91b981abe2445ae31a099a156e0"
+  },
+  {
+    "table": "PushSubscription",
+    "columns": [
+      "id",
+      "endpoint",
+      "keys",
+      "region",
+      "createdAt"
+    ],
+    "rows": 0,
+    "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+    "table": "RescueEvent",
+    "columns": [
+      "id",
+      "sosId",
+      "kind",
+      "fromStatus",
+      "toStatus",
+      "actorId",
+      "actorName",
+      "actorRole",
+      "detail",
+      "createdAt"
+    ],
+    "rows": 0,
+    "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+    "table": "SOSRequest",
+    "columns": [
+      "id",
+      "userId",
+      "userName",
+      "userPhone",
+      "lat",
+      "lng",
+      "message",
+      "hazardType",
+      "vulnerabilityTags",
+      "priority",
+      "status",
+      "assignedVolunteerId",
+      "citizenConfirmedResolved",
+      "batteryLevel",
+      "reportedByProxy",
+      "subjectDescription",
+      "createdAt",
+      "updatedAt",
+      "cancelReason",
+      "triageTag",
+      "capturedAt",
+      "coordsAccuracy",
+      "acknowledgmentDueAt",
+      "assignedAt",
+      "assignmentAcknowledgedAt",
+      "handoffReason",
+      "handoffRequestedAt"
+    ],
+    "rows": 5,
+    "hash": "a08277b48b6dac138792739cdaad7fb220f8ad046fd36ec31c2b6325a6d6e17e"
+  },
+  {
+    "table": "Shelter",
+    "columns": [
+      "id",
+      "name",
+      "address",
+      "lat",
+      "lng",
+      "capacity",
+      "currentOccupancy",
+      "waterLitersRemaining",
+      "waterThreshold",
+      "rationsUnitsRemaining",
+      "rationsThreshold",
+      "medicalKitsRemaining",
+      "medicalThreshold",
+      "blanketsRemaining",
+      "blanketsThreshold",
+      "waterOk",
+      "rationsOk",
+      "restroomsOk",
+      "powerOk",
+      "status",
+      "contact",
+      "active",
+      "lastAuditedAt",
+      "createdAt"
+    ],
+    "rows": 6,
+    "hash": "303885afd20407adbbcb88337e54e3e7162ca5820d5b41bc13fac2b079868e9d"
+  },
+  {
+    "table": "ShelterEvent",
+    "columns": [
+      "id",
+      "shelterId",
+      "deltaOccupancy",
+      "deltaWaterLiters",
+      "deltaRations",
+      "deltaMedicalKits",
+      "deltaBlankets",
+      "reason",
+      "operatorName",
+      "idempotencyKey",
+      "capturedAt",
+      "createdAt"
+    ],
+    "rows": 12,
+    "hash": "2ab0f2ddbf7fdd55ec5ba5c56e854815b98e6ee49da8a743a936080bd432ccac"
+  },
+  {
+    "table": "SupplyDistribution",
+    "columns": [
+      "id",
+      "citizenId",
+      "shelterId",
+      "supplyRequestId",
+      "itemName",
+      "quantity",
+      "scannedCode",
+      "idempotencyKey",
+      "distributedAt"
+    ],
+    "rows": 6,
+    "hash": "9f11e6c00fc04673a897462d4f29f7f25f3e1cafba129efadd7eb6dfd985c902"
+  },
+  {
+    "table": "SupplyRequest",
+    "columns": [
+      "id",
+      "shelterId",
+      "itemName",
+      "quantityNeeded",
+      "quantityFulfilled",
+      "unit",
+      "status",
+      "updatedAt"
+    ],
+    "rows": 8,
+    "hash": "baedab216255bd5a43815bfc3bfe79c3673de8fac1e2b26ea317a45d79445d1d"
+  },
+  {
+    "table": "SupplyShipment",
+    "columns": [
+      "id",
+      "shelterId",
+      "supplyRequestId",
+      "itemName",
+      "quantityClaimed",
+      "quantityVerified",
+      "loggedByUserId",
+      "receivedAt"
+    ],
+    "rows": 0,
+    "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+    "table": "User",
+    "columns": [
+      "id",
+      "name",
+      "email",
+      "passwordHash",
+      "role",
+      "phone",
+      "lat",
+      "lng",
+      "trusted",
+      "safetyStatus",
+      "safetyUpdatedAt",
+      "createdAt",
+      "region",
+      "locationUpdatedAt",
+      "onDuty"
+    ],
+    "rows": 31,
+    "hash": "485fdf1401aa79faae94def641ceeb8a66d0e524bd54f27a5802274accbb54da"
+  }
+]

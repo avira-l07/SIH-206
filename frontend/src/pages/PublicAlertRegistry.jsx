@@ -1,19 +1,8 @@
+import { useSocket } from '../context/SocketContext';
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
-import {
-  Bell,
-  Phone,
-  Shield,
-  CheckCircle2,
-  AlertTriangle,
-  Radio,
-  ArrowLeft,
-  Volume2,
-  Lock,
-  Smartphone,
-  Info,
-  Loader2,
-} from 'lucide-react';
+import { subscribePush } from '../services/push';
+import { Bell, Phone, Shield, CheckCircle2, AlertTriangle, Radio, ArrowLeft, Lock, Smartphone, Info, Loader2 } from 'lucide-react';
 
 const POPULAR_REGIONS = [
   'All Regions (National/Statewide)',
@@ -33,19 +22,9 @@ const POPULAR_REGIONS = [
   'Nagpur',
 ];
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
-
 export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) {
   // SMS Registration State
+  const [challenge,setChallenge]=useState(''),[verificationCode,setVerificationCode]=useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [selectedRegion, setSelectedRegion] = useState('All Regions (National/Statewide)');
   const [phoneLoading, setPhoneLoading] = useState(false);
@@ -59,18 +38,23 @@ export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) 
   const [pushSuccess, setPushSuccess] = useState('');
   const [pushError, setPushError] = useState('');
 
+  const { socket } = useSocket();
   // Live Stats State
-  const [stats, setStats] = useState({ totalPhones: 0, totalPushSubs: 0 });
+  const [stats, setStats] = useState({ totalPhones: null, totalPushSubs: null });
 
+  const [statsError, setStatsError] = useState(false);
   // Fetch Public Stats
   const loadStats = async () => {
     try {
       const res = await api.get('/registry/stats');
+      setStatsError(false);
       setStats({
+        channelsActive: res.data?.channelsActive || [],
         totalPhones: res.data?.totalPhones || 0,
         totalPushSubs: res.data?.totalPushSubs || 0,
       });
     } catch (err) {
+      setStatsError(true);
       console.warn('Could not fetch registry stats:', err.message);
     }
   };
@@ -101,6 +85,11 @@ export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) 
     }
   }, []);
 
+  useEffect(() => {
+    socket?.on('registry:changed', loadStats); socket?.on('connect', loadStats);
+    return () => { socket?.off('registry:changed', loadStats); socket?.off('connect', loadStats); };
+  }, [socket]);
+
   // Submit Phone Number for SMS Broadcast
   const handlePhoneSubmit = async (e) => {
     e.preventDefault();
@@ -115,7 +104,7 @@ export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) 
         region: regionValue,
       });
 
-      setPhoneSuccess(res.data?.message || 'Phone enrolled in emergency SMS registry!');
+      setPhoneSuccess(res.data?.message || 'Enrollment request received');setChallenge(res.data.challengeId||'');
       setPhoneNumber('');
       loadStats();
     } catch (err) {
@@ -133,74 +122,13 @@ export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) 
     setPushLoading(true);
 
     try {
-      if (typeof window !== 'undefined' && !window.isSecureContext) {
-        throw new Error(
-          'Web Push requires a Secure Context (HTTPS or http://localhost). Browsers block the Push API over plain HTTP on LAN IPs (e.g. 192.168.x.x). Please test on localhost:5173 or deployed HTTPS.'
-        );
-      }
-
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        throw new Error('Web Push is not supported on this browser or platform.');
-      }
-
-      // Request Permission
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        setPushStatus(permission === 'denied' ? 'denied' : 'prompt');
-        throw new Error(
-          permission === 'denied'
-            ? 'Notifications are blocked in your browser settings. Please allow notifications for this site to receive emergency push alerts.'
-            : 'Notification permission was not granted.'
-        );
-      }
+      await subscribePush(selectedRegion.startsWith('All') ? null : selectedRegion);
       setPushStatus('granted');
-
-      // Ensure SW is registered and activated
-      let registration = await navigator.serviceWorker.getRegistration();
-      if (!registration) {
-        registration = await navigator.serviceWorker.register('/sw.js');
-      }
-
-      // Avoid indefinite hang if SW takes time to activate
-      const swReadyPromise = navigator.serviceWorker.ready;
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Service Worker activation timed out (6s). Please reload and try again.')),
-          6000
-        )
-      );
-      const activeReg = await Promise.race([swReadyPromise, timeoutPromise]);
-
-      // Get VAPID public key
-      const keyRes = await api.get('/registry/vapid-public-key');
-      const vapidPublicKey = keyRes.data?.publicKey;
-      if (!vapidPublicKey) {
-        throw new Error('Could not retrieve VAPID key from server.');
-      }
-
-      const convertedKey = urlBase64ToUint8Array(vapidPublicKey);
-
-      // Subscribe device with pushManager
-      const subscription = await activeReg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: convertedKey,
-      });
-
-      const subscriptionJson = subscription.toJSON();
-      const regionValue = selectedRegion.startsWith('All') ? null : selectedRegion;
-
-      // Post subscription to backend registry
-      await api.post('/registry/push', {
-        endpoint: subscriptionJson.endpoint,
-        keys: subscriptionJson.keys,
-        region: regionValue,
-      });
-
-      setPushSuccess('This device is now armed for instantaneous emergency alerts!');
+      setPushSuccess('Browser subscription registered. Alerts depend on connectivity and delivery configuration.');
       loadStats();
     } catch (err) {
       console.error('Web Push subscription error:', err);
-      setPushError(err.message || 'Failed to subscribe to Web Push.');
+      setPushError(err.response?.data?.error || err.message || 'Failed to subscribe to Web Push.');
     } finally {
       setPushLoading(false);
     }
@@ -260,7 +188,7 @@ export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) 
             <Shield className="w-6 h-6 text-[#E5A93C] flex-shrink-0 mt-0.5" />
             <div className="space-y-1">
               <h1 className="font-display font-bold text-lg sm:text-xl text-white">
-                Never Miss a Life-Critical Disaster Warning
+                Receive local disaster warnings
               </h1>
               <p className="text-xs sm:text-sm text-[#F6F4EF]/80 leading-relaxed">
                 Emergency alerts shouldn’t stop at registered users. Enrolling here connects you to
@@ -273,20 +201,21 @@ export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) 
           {/* Live Reach Telemetry Counter */}
           <div className="mt-4 pt-4 border-t border-[#F6F4EF]/15 grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
             <div className="bg-white/5 p-2 rounded border border-white/10">
-              <div className="text-lg font-mono font-bold text-[#E5A93C]">{stats.totalPhones}</div>
-              <div className="text-[10px] font-mono text-white/70 uppercase">Registered Phones (SMS)</div>
+              <div className="text-lg font-mono font-bold text-[#E5A93C]">{stats.verifiedPhones ?? '—'}</div>
+              <div className="text-[10px] font-mono text-white/70 uppercase">Verified Phones (SMS)</div>
             </div>
             <div className="bg-white/5 p-2 rounded border border-white/10">
-              <div className="text-lg font-mono font-bold text-[#4ADE80]">{stats.totalPushSubs}</div>
-              <div className="text-[10px] font-mono text-white/70 uppercase">Active Push Devices</div>
+              <div className="text-lg font-mono font-bold text-[#4ADE80]">{stats.totalPushSubs ?? '—'}</div>
+              <div className="text-[10px] font-mono text-white/70 uppercase">Registered Push Devices</div>
             </div>
             <div className="hidden sm:block bg-white/5 p-2 rounded border border-white/10">
-              <div className="text-lg font-mono font-bold text-white">3 Channels</div>
-              <div className="text-[10px] font-mono text-white/70 uppercase">SMS • Push • In-App Takeover</div>
+              <div className="text-lg font-mono font-bold text-white">{stats.channelsActive?.length ?? '—'} Channels</div>
+              <div className="text-[10px] font-mono text-white/70 uppercase">Configured Delivery Channels</div>
             </div>
           </div>
         </div>
 
+        {statsError && <p role="status" className="text-sm text-amber-800">Registry statistics are unavailable; previously loaded counts may be stale.</p>}
         {/* Two-Column Setup: Phone SMS + Web Push */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* 1. Phone SMS Registry */}
@@ -313,6 +242,7 @@ export default function PublicAlertRegistry({ onBackToLogin, onBackToLanding }) 
                 </div>
               )}
 
+              {challenge&&<form className="mb-3 space-y-2" onSubmit={async e=>{e.preventDefault();setPhoneLoading(true);setPhoneError('');try{const r=await api.post('/registry/phone/verify',{challengeId:challenge,code:verificationCode});setPhoneSuccess(r.data.message);setChallenge('');setVerificationCode('');loadStats();}catch(err){setPhoneError(err.response?.data?.error||'Verification failed.');}finally{setPhoneLoading(false);}}}><label className="block text-sm">Phone verification code<input required autoComplete="one-time-code" value={verificationCode} onChange={e=>setVerificationCode(e.target.value)} className="block w-full rounded border p-2"/></label><button disabled={phoneLoading} className="rounded border p-2 text-sm">Verify and enroll phone</button></form>}
               {phoneError && (
                 <div className="mb-4 p-3 bg-[#B23A2E]/10 border border-[#B23A2E]/30 text-[#B23A2E] text-xs rounded flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />

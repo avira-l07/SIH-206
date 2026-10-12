@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, MapPin, X, Check, AlertTriangle, CheckCircle2, Loader2, RotateCcw } from 'lucide-react';
+import { ShieldCheck, X, Check, CheckCircle2, Loader2, RotateCcw } from 'lucide-react';
 import api from '../services/api';
 import { calculateDistanceKm } from '../services/haversine';
 import { useAuth } from '../context/AuthContext';
@@ -12,15 +12,15 @@ export default function HazardConfirmationPrompt({ reports = [], userCoords, onC
 
   if (!userCoords) return null;
 
-  // Find reports that are unconfirmed/under review (GREY or AMBER) within 1.5km of current user
+  // Find reports that are unconfirmed/under review (GREY or AMBER) within 300 metres of current user
   // Skip reports authored by the current user
   const nearbyReports = reports.filter((r) => {
     if (r.confidenceTier === 'RESOLVED' || r.confidenceTier === 'DISPUTED') return false;
     if (user?.id && r.userId === user.id) return false;
     if (dismissedIds.includes(r.id)) return false;
 
-    const distKm = calculateDistanceKm(userCoords.lat, userCoords.lng, r.lat, r.lng);
-    return distKm <= 2.0; // 2km radius
+    const distKm = calculateDistanceKm(userCoords.lat, userCoords.lng, r.lat, r.lng, false);
+    return user?.role === 'ADMIN' || (user?.role === 'VOLUNTEER' && user.trusted) || distKm <= 0.3; // citizen peer radius
   });
 
   if (nearbyReports.length === 0) return null;

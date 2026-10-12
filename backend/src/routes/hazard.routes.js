@@ -1,19 +1,10 @@
 const express = require('express');
 const router = express.Router();
+router.param('id', require('../middleware/request.middleware').validateId);
 const hazardController = require('../controllers/hazard.controller');
-const { authenticateToken, JWT_SECRET } = require('../middleware/auth.middleware');
-const jwt = require('jsonwebtoken');
+const { authenticateToken, optionalAuth } = require('../middleware/auth.middleware');
 
-function optionalAuth(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return next();
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (!err) req.user = user;
-    next();
-  });
-}
 
 router.get('/', hazardController.getHazardReports);
 router.post('/', optionalAuth, hazardController.createHazardReport);

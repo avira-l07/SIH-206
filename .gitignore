@@ -7,3 +7,11 @@ dist/
 *.log
 
 active_tunnel_url.txt
+
+backend/backups/
+backend/test/.sih-audit-*/
+backend/test/.sih-ui-*/
+
+backend/test/*.err
+
+backend/.mfa-key

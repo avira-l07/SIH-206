@@ -10,7 +10,7 @@ async function register(req, res) {
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const cleanPassword = typeof password === 'string' ? password : '';
 
-    if (!name || !cleanEmail || !cleanPassword) {
+    if (typeof name !== 'string' || !name.trim() || !cleanEmail || !cleanPassword) {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
 
@@ -27,11 +27,11 @@ async function register(req, res) {
       return res.status(400).json({ error: 'A valid email address is required (max 254 characters)' });
     }
 
-    if (cleanPassword.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    if (cleanPassword.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long' });
     }
-    if (cleanPassword.length > 72) {
-      return res.status(400).json({ error: 'Password must be 72 characters or fewer' });
+    if (Buffer.byteLength(cleanPassword, 'utf8') > 72) {
+      return res.status(400).json({ error: 'Password must be at most 72 UTF-8 bytes' });
     }
 
     const trimmedName = String(name).trim().slice(0, 100);
@@ -62,11 +62,7 @@ async function register(req, res) {
       },
     });
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, name: user.name, trusted: user.trusted },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const token = require('../services/account-security.service').token(user);
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -81,11 +77,15 @@ async function register(req, res) {
         lat: user.lat,
         lng: user.lng,
         trusted: user.trusted,
+        serviceRegion:user.serviceRegion,
+        securitySetupRequired:user.role==='ADMIN'&&process.env.NODE_ENV==='production'&&process.env.REQUIRE_OPERATOR_MFA!=='false'&&!user.mfaEnabledAt,
+        onDuty: user.onDuty,
+        locationUpdatedAt: user.locationUpdatedAt,
       },
     });
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({ error: 'Failed to register user' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to register user' });
   }
 }
 
@@ -110,11 +110,8 @@ async function login(req, res) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, name: user.name, trusted: user.trusted },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    await require('../services/transaction.service').transaction(async tx => { await require('../services/account-security.service').factor(tx, user, req.body.code); });
+    const token = require('../services/account-security.service').token(user);
 
     res.status(200).json({
       message: 'Login successful',
@@ -129,12 +126,14 @@ async function login(req, res) {
         lat: user.lat,
         lng: user.lng,
         trusted: user.trusted,
+        onDuty: user.onDuty,
+        locationUpdatedAt: user.locationUpdatedAt,
         safetyStatus: user.safetyStatus || 'UNKNOWN',
         safetyUpdatedAt: user.safetyUpdatedAt,
       },
     });
   } catch (error) {
-    console.error('[Login 500] Error authenticating user:', {
+    if(!error.status)console.error('[Login 500] Error authenticating user:', {
       message: error.message,
       code: error.code,
       meta: error.meta,
@@ -142,7 +141,7 @@ async function login(req, res) {
       emailProvided: !!req.body?.email,
       passwordProvided: !!req.body?.password,
     });
-    res.status(500).json({ error: 'Failed to authenticate user' });
+    res.status(error.status || (error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : 500)).json({ error: error.status ? error.message : 'Failed to authenticate user', mfaRequired:Boolean(error.status === 401) });
   }
 }
 
@@ -159,10 +158,13 @@ async function getMe(req, res) {
         region: true,
         lat: true,
         lng: true,
+        onDuty: true,
+        locationUpdatedAt: true,
         trusted: true,
         safetyStatus: true,
         safetyUpdatedAt: true,
         createdAt: true,
+        emailVerifiedAt:true, phoneVerifiedAt:true, identityReviewedAt:true, serviceRegion:true, mfaEnabledAt:true,
       },
     });
 
@@ -170,10 +172,10 @@ async function getMe(req, res) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.status(200).json({ user });
+    res.status(200).json({ user: {...user, securitySetupRequired:req.user.securitySetupRequired} });
   } catch (error) {
     console.error('GetMe error:', error);
-    res.status(500).json({ error: 'Failed to fetch user profile' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch user profile' });
   }
 }
 
@@ -236,7 +238,7 @@ async function updateSafetyStatus(req, res) {
     });
   } catch (error) {
     console.error('Error updating safety status:', error);
-    res.status(500).json({ error: 'Failed to update safety status' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to update safety status' });
   }
 }
 
@@ -260,18 +262,20 @@ async function lookupSafetyStatus(req, res) {
     if (cleanQuery.length < 3) {
       return res.status(400).json({ error: 'Query contains too few valid characters (min 3 alphanumeric)' });
     }
-    const foundUser = await prisma.user.findFirst({
+    const matches = await prisma.user.findMany({
       where: {
         OR: [
           { phone: cleanQuery },
-          { name: { contains: cleanQuery } },
+          { name: cleanQuery },
         ],
       },
       select: {
         safetyStatus: true,
         safetyUpdatedAt: true,
       },
+      take: 2,
     });
+    const foundUser = matches.length === 1 ? matches[0] : null;
 
     if (!foundUser) {
       return res.status(404).json({ error: 'No civilian record found matching query' });
@@ -284,7 +288,7 @@ async function lookupSafetyStatus(req, res) {
     });
   } catch (error) {
     console.error('Error looking up safety status:', error);
-    res.status(500).json({ error: 'Failed to lookup safety status' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to lookup safety status' });
   }
 }
 
@@ -298,20 +302,24 @@ async function setUserTrust(req, res) {
 
     const updated = await prisma.user.update({
       where: { id: userId },
-      data: { trusted: Boolean(trusted) },
+      data: { trusted },
       select: { id: true, name: true, email: true, role: true, trusted: true },
     });
 
+    const { getIO } = require('../sockets/socketHandler');
+    getIO().in('user:' + userId).disconnectSockets(true);
+    require('../sockets/socketHandler').notifyRespondersChanged();
     res.status(200).json({ message: `User trust updated to ${updated.trusted}`, user: updated });
   } catch (error) {
     console.error('Error updating user trust:', error);
-    res.status(500).json({ error: 'Failed to update user trust' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to update user trust' });
   }
 }
 
 async function updateLocation(req, res) {
   try {
     const { lat, lng, region } = req.body;
+    if (typeof lat !== 'number' || typeof lng !== 'number') return res.status(400).json({ error: 'Both latitude and longitude are required' });
     const validLat = typeof lat === 'number' && lat >= -90 && lat <= 90 ? lat : null;
     const validLng = typeof lng === 'number' && lng >= -180 && lng <= 180 ? lng : null;
     const cleanRegion = region ? String(region).trim().slice(0, 100) : undefined;
@@ -319,6 +327,7 @@ async function updateLocation(req, res) {
     const updated = await prisma.user.update({
       where: { id: req.user.id },
       data: {
+        locationUpdatedAt: new Date(),
         ...(validLat !== null ? { lat: validLat } : {}),
         ...(validLng !== null ? { lng: validLng } : {}),
         ...(cleanRegion !== undefined ? { region: cleanRegion } : {}),
@@ -335,27 +344,71 @@ async function updateLocation(req, res) {
       },
     });
 
+    require('../sockets/socketHandler').notifyRespondersChanged();
     res.status(200).json({ message: 'Location updated successfully', user: updated });
   } catch (error) {
     console.error('Error updating location:', error);
-    res.status(500).json({ error: 'Failed to update user location' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to update user location' });
   }
 }
 
 async function getUsers(req, res) {
   try {
     const users = await prisma.user.findMany({
-      select: { id: true, name: true, email: true, role: true, phone: true, trusted: true },
+      select: { id: true, name: true, email: true, role: true, phone: true, trusted: true, serviceRegion:true, identityReviewedAt:true },
       orderBy: { id: 'asc' },
     });
     res.status(200).json({ users });
   } catch (error) {
     console.error('Error fetching users:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch users' });
   }
 }
 
+async function updateAvailability(req, res, next) {
+  if (typeof req.body.onDuty !== 'boolean') return res.status(400).json({ error: 'onDuty must be a boolean' });
+  try {
+    const user = await require('../services/transaction.service').transaction(async tx=>{const updated=await tx.user.update({where:{id:req.user.id},data:{onDuty:req.body.onDuty},select:{id:true,onDuty:true}});if(!req.body.onDuty)await tx.routeHelpPoint.updateMany({where:{assignedVolunteerId:req.user.id,confirmedAt:{not:null}},data:{confirmedAt:null}});return updated;});
+    require('../sockets/socketHandler').notifyRespondersChanged();
+    require('../sockets/socketHandler').notifyOperationsChanged('evacuation');
+    res.json({ user });
+  } catch (error) { next(error); }
+}
+async function getResponders(req, res, next) {
+  try {
+    const result = await require('../services/transaction.service').transaction(async tx => {
+      const responders = await tx.user.findMany({ where: { role: 'VOLUNTEER', trusted: true, ...(req.user.serviceRegion ? {serviceRegion:req.user.serviceRegion} : {}) }, select: { id: true, name: true, onDuty: true, locationUpdatedAt: true, serviceRegion:true, identityReviewedAt:true }, orderBy: { name: 'asc' } });
+      const counts = await tx.sOSRequest.groupBy({ by: ['assignedVolunteerId'], where: { status: { in: ['EN_ROUTE','ON_SCENE','EVACUATED','HANDED_OVER_TO_MEDICAL'] } }, _count: { id: true } });
+      return responders.map(user => ({ ...user, activeAssignments: counts.find(c => c.assignedVolunteerId === user.id)?._count.id || 0, locationFresh: Boolean(user.locationUpdatedAt && Date.now() - user.locationUpdatedAt.getTime() <= 15 * 60000) }));
+    });
+    res.json({ responders: result });
+  } catch (error) { next(error); }
+}
+
+async function updateProfile(req, res, next) {
+  const allowed = ['name', 'phone', 'region'];
+  if (!Object.keys(req.body).length || Object.keys(req.body).some(k => !allowed.includes(k))) return res.status(400).json({ error: 'Only name, phone and region can be updated here' });
+  const data = {};
+  if ('name' in req.body) { if (typeof req.body.name !== 'string' || !req.body.name.trim()) return res.status(400).json({ error: 'A name is required' }); data.name = req.body.name.trim(); }
+  for (const field of ['phone', 'region']) if (field in req.body) {
+    if (req.body[field] !== null && typeof req.body[field] !== 'string') return res.status(400).json({ error: field + ' must be text' });
+    data[field] = req.body[field]?.trim() || null;
+  }
+  if (data.phone) {
+    data.phone = data.phone.replace(/[ ()-]/g, '');
+    if (!/^\+?[0-9]{7,15}$/.test(data.phone)) return res.status(400).json({ error: 'Enter a valid phone number with its country code' });
+  }
+  try {
+    if ('phone' in data) {const current = await prisma.user.findUnique({where:{id:req.user.id},select:{phone:true}});if(current.phone !== data.phone) data.phoneVerifiedAt=null;}
+    const user = await prisma.user.update({ where: { id: req.user.id }, data, select: { id: true, name: true, phone: true, region: true } });
+    require('../sockets/socketHandler').notifyRespondersChanged();
+    res.json({ user });
+  } catch (error) { next(error); }
+}
 module.exports = {
+  updateProfile,
+  updateAvailability,
+  getResponders,
   register,
   login,
   getMe,

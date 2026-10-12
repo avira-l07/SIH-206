@@ -1,5 +1,6 @@
+import useNow from '../hooks/useNow';
 import React, { useState } from 'react';
-import { Home, Package, Droplets, Utensils, HeartPulse, Bed, ShieldAlert, Clock, ArrowUpRight, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Package, Droplets, Utensils, HeartPulse, Bed, CheckCircle2, AlertTriangle } from 'lucide-react';
 import api from '../services/api';
 
 /**
@@ -16,6 +17,7 @@ export default function VolunteerShelterStore({
   onRequestSupplies,
   onShelterUpdated,
 }) {
+  const now = useNow();
   const [selectedShelterId, setSelectedShelterId] = useState(
     shelters[0]?.id || 101
   );
@@ -26,7 +28,7 @@ export default function VolunteerShelterStore({
   if (!activeShelter) {
     return (
       <div className="bg-white border border-[#D8D3C7] rounded p-6 text-center font-mono text-xs text-[#14231F]/60">
-        No shelters loaded in tactical grid.
+        No shelters are available yet.
       </div>
     );
   }
@@ -35,33 +37,37 @@ export default function VolunteerShelterStore({
   const occupancyPct = Math.min(100, Math.round((activeShelter.currentOccupancy / activeShelter.capacity) * 100));
 
   // Determine supply statuses
-  const waterRemaining = activeShelter.waterLitersRemaining ?? 0;
+  const waterRemaining = activeShelter.waterLitersRemaining ?? null;
   const waterThreshold = activeShelter.waterThreshold ?? 200;
-  const waterStatus = waterRemaining < waterThreshold ? 'CRITICAL' : waterRemaining < waterThreshold * 1.5 ? 'LOW' : 'OK';
+  const waterStatus = waterRemaining == null ? 'UNKNOWN' : waterRemaining < waterThreshold ? 'CRITICAL' : waterRemaining < waterThreshold * 1.5 ? 'LOW' : 'OK';
 
-  const rationsRemaining = activeShelter.rationsUnitsRemaining ?? 0;
+  const rationsRemaining = activeShelter.rationsUnitsRemaining ?? null;
   const rationsThreshold = activeShelter.rationsThreshold ?? 50;
-  const rationsStatus = rationsRemaining < rationsThreshold ? 'CRITICAL' : rationsRemaining < rationsThreshold * 1.5 ? 'LOW' : 'OK';
+  const rationsStatus = rationsRemaining == null ? 'UNKNOWN' : rationsRemaining < rationsThreshold ? 'CRITICAL' : rationsRemaining < rationsThreshold * 1.5 ? 'LOW' : 'OK';
 
-  const medicalRemaining = activeShelter.medicalKitsRemaining ?? 25;
+  const medicalRemaining = activeShelter.medicalKitsRemaining ?? null;
   const medicalThreshold = activeShelter.medicalThreshold ?? 10;
-  const medicalStatus = medicalRemaining < medicalThreshold ? 'CRITICAL' : medicalRemaining < medicalThreshold * 1.5 ? 'LOW' : 'OK';
+  const medicalStatus = medicalRemaining == null ? 'UNKNOWN' : medicalRemaining < medicalThreshold ? 'CRITICAL' : medicalRemaining < medicalThreshold * 1.5 ? 'LOW' : 'OK';
 
-  const blanketsRemaining = activeShelter.blanketsRemaining ?? 120;
+  const blanketsRemaining = activeShelter.blanketsRemaining ?? null;
   const blanketsThreshold = activeShelter.blanketsThreshold ?? 30;
-  const blanketsStatus = blanketsRemaining < blanketsThreshold ? 'CRITICAL' : blanketsRemaining < blanketsThreshold * 1.5 ? 'LOW' : 'OK';
+  const blanketsStatus = blanketsRemaining == null ? 'UNKNOWN' : blanketsRemaining < blanketsThreshold ? 'CRITICAL' : blanketsRemaining < blanketsThreshold * 1.5 ? 'LOW' : 'OK';
 
   // "What's Lacking" Deficit items
   const deficits = [];
+  if (waterStatus === 'UNKNOWN') deficits.push({ item: 'water', status: 'UNKNOWN', note: 'Inventory has not been audited' });
   if (waterStatus === 'CRITICAL') deficits.push({ item: 'Water', status: 'CRITICAL', note: `${waterRemaining}L remaining (min ${waterThreshold}L)` });
   else if (waterStatus === 'LOW') deficits.push({ item: 'Water', status: 'LOW', note: `${waterRemaining}L remaining` });
 
+  if (rationsStatus === 'UNKNOWN') deficits.push({ item: 'rations', status: 'UNKNOWN', note: 'Inventory has not been audited' });
   if (rationsStatus === 'CRITICAL') deficits.push({ item: 'Rations', status: 'CRITICAL', note: `${rationsRemaining} units (min ${rationsThreshold})` });
   else if (rationsStatus === 'LOW') deficits.push({ item: 'Rations', status: 'LOW', note: `${rationsRemaining} units` });
 
+  if (medicalStatus === 'UNKNOWN') deficits.push({ item: 'medical', status: 'UNKNOWN', note: 'Inventory has not been audited' });
   if (medicalStatus === 'CRITICAL') deficits.push({ item: 'Medical Kits', status: 'CRITICAL', note: `${medicalRemaining} kits (min ${medicalThreshold})` });
   else if (medicalStatus === 'LOW') deficits.push({ item: 'Medical Kits', status: 'LOW', note: `${medicalRemaining} kits` });
 
+  if (blanketsStatus === 'UNKNOWN') deficits.push({ item: 'blankets', status: 'UNKNOWN', note: 'Inventory has not been audited' });
   if (blanketsStatus === 'CRITICAL') deficits.push({ item: 'Blankets', status: 'CRITICAL', note: `${blanketsRemaining} pcs (min ${blanketsThreshold})` });
   else if (blanketsStatus === 'LOW') deficits.push({ item: 'Blankets', status: 'LOW', note: `${blanketsRemaining} pcs` });
 
@@ -71,8 +77,8 @@ export default function VolunteerShelterStore({
   // Format last updated
   const lastAudited = activeShelter.lastAuditedAt ? new Date(activeShelter.lastAuditedAt) : null;
   const timeAgoStr = lastAudited
-    ? `${Math.max(1, Math.round((Date.now() - lastAudited.getTime()) / 60000))}m ago`
-    : 'Recently';
+    ? `${Math.max(1, Math.round((now - lastAudited.getTime()) / 60000))}m ago`
+    : 'Never audited';
 
   // 1-Tap Delta Adjustment Handler
   const handleDelta = async (deltaPayload, fieldKey) => {
@@ -105,21 +111,18 @@ export default function VolunteerShelterStore({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-display font-bold text-sm sm:text-base text-[#14231F] uppercase tracking-tight">
-                Field Shelter Store & Inventory
+              <h2 className="font-display font-bold text-sm sm:text-base text-[#14231F]">
+                Shelter inventory
               </h2>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 bg-[#EFECE4] border border-[#D8D3C7] text-[#14231F]/80 rounded font-semibold">
-                1-TAP LOGISTICS
-              </span>
             </div>
             <p className="text-[11px] text-[#14231F]/60 font-mono mt-0.5">
-              Field-level stock management • Audit verified {timeAgoStr}
+              Last stock audit: {timeAgoStr}
             </p>
           </div>
         </div>
 
         {/* Assigned Shelter Switcher */}
-        <div className="flex items-center gap-2 font-mono text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-sm min-w-0">
           {onRequestSupplies && (
             <button
               type="button"
@@ -129,15 +132,15 @@ export default function VolunteerShelterStore({
               title="Open requisition modal to request relief supplies from central admin"
             >
               <Package className="w-3.5 h-3.5" />
-              <span>REQ SUPPLIES FROM ADMIN</span>
+              <span>Request supplies</span>
             </button>
           )}
-          <label className="text-[#14231F]/70 text-[11px] uppercase font-semibold">Assigned Shelter:</label>
+          <label htmlFor="volunteer-assigned-shelter-select" className="text-[#14231F]/70">Shelter:</label>
           <select
             id="volunteer-assigned-shelter-select"
             value={selectedShelterId}
             onChange={(e) => setSelectedShelterId(Number(e.target.value))}
-            className="p-1.5 bg-[#EFECE4] border border-[#D8D3C7] rounded text-xs font-semibold text-[#14231F] focus:outline-none"
+            className="p-2 max-w-full min-w-0 bg-[#EFECE4] border border-[#D8D3C7] rounded text-sm text-[#14231F] focus:outline-none"
           >
             {shelters.map((s) => (
               <option key={s.id} value={s.id}>
@@ -150,27 +153,15 @@ export default function VolunteerShelterStore({
 
       {/* "What's Lacking" Deficit Banner */}
       <div className="p-3 bg-[#EFECE4] border border-[#D8D3C7] rounded space-y-1.5 font-mono text-xs">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 font-bold uppercase text-[11px] text-[#14231F]">
+        <div className="flex flex-wrap gap-2 items-center justify-between">
+          <div className="flex items-center gap-1.5 font-semibold text-sm text-[#14231F]">
             <AlertTriangle className="w-3.5 h-3.5 text-[#C97A2B]" />
-            <span>What's Lacking / Critical Shortage Alert:</span>
+            <span>Needs attention</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-[#14231F]/60">
-              {deficits.length === 0 ? 'All reserves verified adequate' : `${deficits.length} deficit flags`}
+              {deficits.length === 0 ? 'Stock levels adequate' : `${deficits.length} items to check`}
             </span>
-            {deficits.length > 0 && onRequestSupplies && (
-              <button
-                type="button"
-                id="volunteer-deficit-req-supplies-btn"
-                onClick={() => onRequestSupplies(activeShelter)}
-                className="px-2.5 py-0.5 bg-[#B23A2E] hover:bg-[#8F271E] text-white text-[10px] font-bold rounded flex items-center gap-1 shadow-xs transition-colors"
-                title="Send formal restock requisition to admin"
-              >
-                <Package className="w-3 h-3" />
-                <span>REQ RELIEF FROM ADMIN</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -232,7 +223,7 @@ export default function VolunteerShelterStore({
               onClick={() => handleDelta({ deltaOccupancy: -10 }, 'beds')}
               className="px-2 py-1 bg-[#EFECE4] hover:bg-[#D8D3C7] text-xs font-bold rounded text-center transition-colors disabled:opacity-40"
             >
-              -10
+              10 leave
             </button>
             <button
               type="button"
@@ -241,7 +232,7 @@ export default function VolunteerShelterStore({
               onClick={() => handleDelta({ deltaOccupancy: 10 }, 'beds')}
               className="px-2 py-1 bg-[#14231F] hover:bg-black text-[#F6F4EF] text-xs font-bold rounded text-center transition-colors disabled:opacity-40"
             >
-              +10
+              10 arrive
             </button>
           </div>
         </div>
@@ -260,7 +251,7 @@ export default function VolunteerShelterStore({
               </span>
             </div>
             <div className="text-xl font-bold text-[#14231F] mt-1 tabular-nums">
-              {waterRemaining} <span className="text-xs font-normal text-[#14231F]/60">L (min {waterThreshold}L)</span>
+              {waterRemaining ?? 'Not audited'} <span className="text-xs font-normal text-[#14231F]/60">L (min {waterThreshold}L)</span>
             </div>
             <div className="text-[10px] text-[#14231F]/60 mt-1">Potable tanker tank reserve</div>
           </div>
@@ -301,7 +292,7 @@ export default function VolunteerShelterStore({
               </span>
             </div>
             <div className="text-xl font-bold text-[#14231F] mt-1 tabular-nums">
-              {rationsRemaining} <span className="text-xs font-normal text-[#14231F]/60">units (min {rationsThreshold})</span>
+              {rationsRemaining ?? 'Not audited'} <span className="text-xs font-normal text-[#14231F]/60">units (min {rationsThreshold})</span>
             </div>
             <div className="text-[10px] text-[#14231F]/60 mt-1">Ready-to-eat dry ration boxes</div>
           </div>
@@ -342,7 +333,7 @@ export default function VolunteerShelterStore({
               </span>
             </div>
             <div className="text-xl font-bold text-[#14231F] mt-1 tabular-nums">
-              {medicalRemaining} <span className="text-xs font-normal text-[#14231F]/60">kits (min {medicalThreshold})</span>
+              {medicalRemaining ?? 'Not audited'} <span className="text-xs font-normal text-[#14231F]/60">kits (min {medicalThreshold})</span>
             </div>
             <div className="text-[10px] text-[#14231F]/60 mt-1">First-aid & trauma care kits</div>
           </div>
@@ -383,7 +374,7 @@ export default function VolunteerShelterStore({
               </span>
             </div>
             <div className="text-xl font-bold text-[#14231F] mt-1 tabular-nums">
-              {blanketsRemaining} <span className="text-xs font-normal text-[#14231F]/60">pcs (min {blanketsThreshold})</span>
+              {blanketsRemaining ?? 'Not audited'} <span className="text-xs font-normal text-[#14231F]/60">pcs (min {blanketsThreshold})</span>
             </div>
             <div className="text-[10px] text-[#14231F]/60 mt-1">Thermal blankets & sleeping pads</div>
           </div>

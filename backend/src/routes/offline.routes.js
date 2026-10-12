@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
+router.param('id', require('../middleware/request.middleware').validateId);
 const rateLimit = require('express-rate-limit');
-const jwt = require('jsonwebtoken');
+const { timingSafeEqual } = require('crypto');
 const offlineController = require('../controllers/offline.controller');
-const { authenticateToken, requireRole, JWT_SECRET } = require('../middleware/auth.middleware');
+const { authenticateToken, requireRole } = require('../middleware/auth.middleware');
 
 /**
  * offlineHubAuth — accepts either:
@@ -16,22 +17,12 @@ const { authenticateToken, requireRole, JWT_SECRET } = require('../middleware/au
  */
 function offlineHubAuth(req, res, next) {
   // Path A: valid Bearer JWT
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (token) {
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-      if (!err) {
-        req.user = user;
-        return next();
-      }
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    });
-    return;
-  }
+  if (req.headers.authorization) return authenticateToken(req, res, next);
 
   // Path B: pre-shared LAN relay secret
   const HUB_SECRET = process.env.OFFLINE_HUB_SECRET;
-  if (HUB_SECRET && req.headers['x-hub-secret'] === HUB_SECRET) {
+  const supplied = req.headers['x-hub-secret'];
+  if (HUB_SECRET && typeof supplied === 'string' && Buffer.byteLength(supplied) === Buffer.byteLength(HUB_SECRET) && timingSafeEqual(Buffer.from(supplied), Buffer.from(HUB_SECRET))) {
     req.user = { role: 'RELAY_NODE', id: null }; // synthetic identity for relay devices
     return next();
   }
@@ -43,6 +34,7 @@ function offlineHubAuth(req, res, next) {
 
 // Tight limiter for batch sync: 10 flushes per 15 min per IP is generous for legitimate PWA
 const syncBatchLimiter = rateLimit({
+  store:new (require("../services/database-rate-store").DatabaseRateStore)("offlineBatch"),
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
@@ -52,7 +44,7 @@ const syncBatchLimiter = rateLimit({
 
 // SMS ingest and offline sync logs endpoints — accessible to all authenticated roles for disaster telemetry & demonstration
 router.post('/sms-ingest', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER', 'CITIZEN']), offlineController.ingestSMS);
-router.get('/logs', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER', 'CITIZEN']), offlineController.getSyncLogs);
+router.get('/logs', authenticateToken, requireRole(['ADMIN', 'VOLUNTEER']), offlineController.getSyncLogs);
 router.post('/sync-batch', syncBatchLimiter, offlineHubAuth, offlineController.syncOfflineBatch);
 
 

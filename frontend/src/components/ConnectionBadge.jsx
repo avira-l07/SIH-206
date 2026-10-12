@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { Wifi, WifiOff, RefreshCw, UploadCloud } from 'lucide-react';
+import { WifiOff, RefreshCw, UploadCloud } from 'lucide-react';
 import { subscribeQueue, flushQueue, isManualOffline } from '../services/offlineQueue';
 
 export default function ConnectionBadge() {
@@ -8,6 +8,7 @@ export default function ConnectionBadge() {
   const [queuedCount, setQueuedCount] = useState(0);
   const [manualOffline, setManualOfflineState] = useState(isManualOffline());
   const [flushing, setFlushing] = useState(false);
+  const [feedback,setFeedback] = useState('');
 
   useEffect(() => {
     const unsubscribe = subscribeQueue((count) => {
@@ -18,26 +19,28 @@ export default function ConnectionBadge() {
   }, []);
 
   const handleManualFlush = async () => {
-    setFlushing(true);
+    setFlushing(true);setFeedback('');
     try {
-      await flushQueue();
+      const result = await flushQueue();
+      setFeedback(result.error || result.errors?.join('; ') || result.reason || (result.skipped ? 'Reports remain saved on this device.' : `${result.syncedCount||0} reports synchronized. ${result.failedCount||0} remain saved.`));
+    } catch {setFeedback('Could not synchronize. Your reports remain saved; retry when connected.');
     } finally {
       setFlushing(false);
     }
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2 relative">
       {/* Primary Connectivity Badge */}
       {manualOffline ? (
         <div
           id="connection-status-badge"
           className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-[#B23A2E]/40 bg-[#B23A2E]/15 text-[#B23A2E] rounded"
-          title="Manual outage override active (Presenter Stage Mode)"
+          title="Offline test mode is active. Reports remain on this device until synchronization."
         >
           <WifiOff className="w-3.5 h-3.5 animate-pulse" />
           <span className="font-mono tracking-tight font-bold">
-            STAGE OUTAGE {queuedCount > 0 ? `(${queuedCount} QUEUED)` : ''}
+            Offline mode {queuedCount > 0 ? `(${queuedCount} QUEUED)` : ''}
           </span>
         </div>
       ) : isReconnecting ? (
@@ -47,7 +50,7 @@ export default function ConnectionBadge() {
           title="Reconnecting to local relay hub"
         >
           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-          <span className="font-mono tracking-tight">CONNECTING RELAY...</span>
+          <span className="font-mono tracking-tight">Connecting…</span>
         </div>
       ) : isConnected ? (
         <div
@@ -56,7 +59,7 @@ export default function ConnectionBadge() {
           title="Real-time WebSocket connection active to local network relay"
         >
           <span className="w-2 h-2 rounded-full bg-[#2E6E4E] inline-block animate-pulse"></span>
-          <span className="font-mono tracking-tight">LIVE RELAY</span>
+          <span className="font-mono tracking-tight">Live</span>
         </div>
       ) : (
         <div
@@ -81,9 +84,10 @@ export default function ConnectionBadge() {
           title="Flush queued offline items to relay hub immediately"
         >
           <UploadCloud className={`w-3 h-3 ${flushing ? 'animate-bounce text-[#C97A2B]' : 'text-[#2E6E4E]'}`} />
-          <span>SYNC ({queuedCount})</span>
+          <span>{flushing?'Syncing…':`Sync saved (${queuedCount})`}</span>
         </button>
       )}
+      {feedback&&<div role="status" className="absolute top-full right-0 mt-2 z-50 w-64 rounded-lg border bg-white p-3 shadow-lg text-sm">{feedback}<button className="block underline" onClick={()=>setFeedback('')}>Dismiss</button></div>}
     </div>
   );
 }

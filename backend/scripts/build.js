@@ -12,13 +12,7 @@ try {
   console.log('1. Generating Prisma client...');
   execSync('npx prisma generate', { stdio: 'inherit', env: process.env });
 
-  console.log('2. Syncing schema to database (prisma db push)...');
-  execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit', env: process.env });
-
-  console.log('3. Seeding database with initial users, shelters, alerts...');
-  execSync('node prisma/seed.js', { stdio: 'inherit', env: process.env });
-
-  console.log('✅ Build & database initialization completed successfully!');
+  console.log('Build completed. Apply reviewed schema changes and seed explicitly as separate operations.');
 } catch (err) {
   console.error('❌ Build failed:', err.message);
   process.exit(1);

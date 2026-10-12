@@ -1,4 +1,5 @@
 const prisma = require('../db');
+const { broadcastMissingChanged } = require('../sockets/socketHandler');
 
 /**
  * Search and list missing person reports
@@ -34,7 +35,7 @@ async function getMissingPersons(req, res) {
     res.status(200).json({ reports });
   } catch (error) {
     console.error('Error fetching missing persons:', error);
-    res.status(500).json({ error: 'Failed to fetch missing persons' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to fetch missing persons' });
   }
 }
 
@@ -45,7 +46,7 @@ async function reportMissingPerson(req, res) {
   try {
     const { reportedByName, contactPhone, fullName, age, gender, lastSeenLocation, description, lat, lng } = req.body;
 
-    if (!reportedByName || !contactPhone || !fullName || !lastSeenLocation) {
+    if (![reportedByName, contactPhone, fullName, lastSeenLocation].every(value => typeof value === 'string' && value.trim())) {
       return res.status(400).json({
         error: 'Required: reportedByName, contactPhone, fullName, lastSeenLocation',
       });
@@ -53,7 +54,7 @@ async function reportMissingPerson(req, res) {
 
     // Validate phone: only digits, +, -, spaces; min 7, max 20 chars
     const cleanPhone = String(contactPhone).replace(/[^\d+\-\s]/g, '').trim();
-    if (cleanPhone.length < 7 || cleanPhone.length > 20) {
+    if (!/^[+\d\s()-]+$/.test(contactPhone) || cleanPhone.replace(/\D/g, '').length < 7 || cleanPhone.replace(/\D/g, '').length > 15) {
       return res.status(400).json({ error: 'contactPhone must be 7–20 valid digits' });
     }
 
@@ -73,20 +74,23 @@ async function reportMissingPerson(req, res) {
         reportedByName: String(reportedByName).trim(),
         contactPhone: cleanPhone,
         fullName: String(fullName).trim(),
-        age: age ? parseInt(age) : null,
+        age: age != null ? Number(age) : null,
         gender: gender || null,
         lastSeenLocation: String(lastSeenLocation).trim(),
         description: description ? String(description).trim() : '',
         lat: parsedLat,
         lng: parsedLng,
         status: 'MISSING',
+        region: require('../services/field.service').regionKey(req.body.region || req.user?.region),
+        reportedByUserId:req.user?.id || null,
       },
     });
 
-    res.status(201).json({ message: 'Missing person bulletin registered with emergency services', report });
+    broadcastMissingChanged(report);
+    res.status(201).json({ message: 'Missing-person report saved', report });
   } catch (error) {
     console.error('Error filing missing person report:', error);
-    res.status(500).json({ error: 'Failed to file missing person report' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to file missing person report' });
   }
 }
 
@@ -102,7 +106,10 @@ async function updateMissingStatus(req, res) {
     if (!valid.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be: ${valid.join(', ')}` });
     }
+    if (status === 'SAFE_AT_SHELTER' && !shelterName?.trim()) return res.status(400).json({ error: 'A shelter name is required when marking a person safe at a shelter' });
 
+    const existing=await prisma.missingPerson.findUnique({where:{id:Number(id)}});
+    if(existing?.matchedIntakeId)return res.status(409).json({error:"Use the reviewed match correction workflow before changing this report"});
     const updated = await prisma.missingPerson.update({
       where: { id: parseInt(id) },
       data: {
@@ -111,10 +118,11 @@ async function updateMissingStatus(req, res) {
       },
     });
 
+    broadcastMissingChanged(updated);
     res.status(200).json({ message: `Status updated to ${status}`, report: updated });
   } catch (error) {
     console.error('Error updating missing person status:', error);
-    res.status(500).json({ error: 'Failed to update missing person status' });
+    res.status(error.code === 'P2025' ? 404 : error.code === 'P2002' ? 409 : error.code === 'P2003' ? 400 : 500).json({ error: 'Failed to update missing person status' });
   }
 }
 

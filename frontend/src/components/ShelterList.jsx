@@ -22,6 +22,8 @@ import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { enqueueAction, isManualOffline } from '../services/offlineQueue';
 import api from '../services/api';
+import { openFieldTool } from '../services/consoleNavigation';
+import { validMapPoint } from '../services/offlineMap';
 
 export default function ShelterList({
   shelters = [],
@@ -72,8 +74,8 @@ export default function ShelterList({
 
   const sorted = sortSheltersByDistance(
     shelters,
-    userCoords?.lat ?? 19.076,
-    userCoords?.lng ?? 72.8777
+    validMapPoint(userCoords) ? userCoords.lat : null,
+    validMapPoint(userCoords) ? userCoords.lng : null
   );
 
   const filtered = sorted.filter(
@@ -83,7 +85,7 @@ export default function ShelterList({
   );
 
   // Auto-Redirect Calculation (Citizen and Operator view):
-  const nearestShelter = sorted[0];
+  const nearestShelter = validMapPoint(userCoords) ? sorted[0] : null;
   const isNearestCritical = nearestShelter && nearestShelter.status === 'RED';
   const nextViableShelter = isNearestCritical
     ? sorted.find((s) => s.id !== nearestShelter.id && s.status !== 'RED')
@@ -209,7 +211,7 @@ export default function ShelterList({
         setDeltaRations(0);
         setEventReason('');
       } catch (err) {
-        console.error('Failed to queue delta event offline:', err);
+        alert(err.message || 'Could not save the shelter update on this device.');
       } finally {
         setSubmittingDelta(false);
       }
@@ -231,7 +233,7 @@ export default function ShelterList({
       setDeltaRations(0);
       setEventReason('');
     } catch (err) {
-      console.warn('Direct delta update failed, falling back to offline queue:', err);
+      if (err.response) { alert(err.response.data?.error || 'Shelter update rejected.'); return; }
       try {
         await enqueueAction({
           type: 'SHELTER_EVENT',
@@ -240,6 +242,7 @@ export default function ShelterList({
         });
         setDeltaSuccessMsg('Relay offline: Delta queued in IndexedDB for commutative sync.');
       } catch (queueErr) {
+        console.error(queueErr.message);
         alert(err.response?.data?.error || 'Failed to record delta event');
       }
     } finally {
@@ -284,14 +287,14 @@ export default function ShelterList({
   return (
     <div className="bg-[#FFFFFF] border border-[#D8D3C7] rounded overflow-hidden flex flex-col h-full">
       {/* Header */}
-      <div className="p-3 bg-[#EFECE4] border-b border-[#D8D3C7] flex items-center justify-between gap-2">
+      <div className="p-3 bg-[#EFECE4] border-b border-[#D8D3C7] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Home className="w-4 h-4 text-[#14231F]" />
-          <h3 className="font-display font-bold text-sm text-[#14231F] uppercase tracking-tight">
+          <h3 className="font-display font-bold text-sm text-[#14231F]">
             Emergency Shelters ({filtered.length})
           </h3>
         </div>
-        <span className="text-[10px] font-mono text-[#14231F]/60">SORTED BY PROXIMITY</span>
+        <span className="text-xs text-[#14231F]/60">{userCoords ? 'Nearest first' : 'Location unavailable'}</span>
       </div>
 
       {/* Auto-Redirect Alert Banner if nearest shelter is RED */}
@@ -306,7 +309,7 @@ export default function ShelterList({
               NEAREST SHELTER ({nearestShelter.name}) IS AT CAPACITY / DEPLETED
             </div>
             <div className="text-[11px] text-white/95 mt-0.5 flex items-center gap-1">
-              <span>Redirecting to nearest viable safe haven:</span>
+              <span>Another nearby shelter to contact:</span>
               <button
                 type="button"
                 onClick={() => onSelectShelter && onSelectShelter(nextViableShelter)}
@@ -349,6 +352,7 @@ export default function ShelterList({
         <div className="relative">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-[#14231F]/40" />
           <input
+            aria-label="Search shelters by name or area"
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -367,7 +371,7 @@ export default function ShelterList({
         ) : (
           filtered.map((shelter) => {
             const availableBeds = Math.max(0, shelter.capacity - shelter.currentOccupancy);
-            const occupancyPct = Math.round((shelter.currentOccupancy / shelter.capacity) * 100);
+            const occupancyPct = shelter.capacity > 0 ? Math.round((shelter.currentOccupancy / shelter.capacity) * 100) : 100;
             const statusColor =
               shelter.status === 'RED'
                 ? 'bg-[#B23A2E] text-white'
@@ -386,19 +390,18 @@ export default function ShelterList({
                 : !shelter.rationsOk;
 
             return (
-              <div
+              <article
                 key={shelter.id}
-                className={`p-3.5 hover:bg-[#F6F4EF] transition-colors cursor-pointer space-y-2 ${
+                className={`p-3.5 hover:bg-[#F6F4EF] transition-colors space-y-3 ${
                   shelter.status === 'RED' ? 'bg-[#B23A2E]/5' : ''
                 }`}
-                onClick={() => onSelectShelter && onSelectShelter(shelter)}
               >
                 {/* Name, Status & Distance */}
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold uppercase ${statusColor}`}>
-                        {shelter.status}
+                        {shelter.status === 'RED' ? 'Limited availability' : shelter.status === 'YELLOW' ? 'Check before arrival' : 'Reported available'}
                       </span>
                       <h4 className="font-display font-semibold text-xs sm:text-sm text-[#14231F]">
                         {shelter.name}
@@ -407,16 +410,16 @@ export default function ShelterList({
                     <p className="text-[11px] text-[#14231F]/70 line-clamp-1 mt-0.5">{shelter.address}</p>
                   </div>
 
-                  {shelter.distanceKm !== Infinity && (
+                  {Number.isFinite(shelter.distanceKm) && (
                     <div className="flex items-center gap-1 font-mono text-xs text-[#14231F] bg-[#EFECE4] px-1.5 py-0.5 rounded border border-[#D8D3C7] flex-shrink-0">
                       <Navigation className="w-3 h-3 text-[#2E6E4E]" />
-                      <span className="tabular-nums font-semibold">{shelter.distanceKm} km</span>
+                      <span className="tabular-nums font-semibold" title="Straight-line distance, not travel distance">{shelter.distanceKm} km away</span>
                     </div>
                   )}
                 </div>
 
-                {/* 5-Resource Compact Readiness Bar */}
-                <div className="grid grid-cols-5 gap-1 pt-1 font-mono text-[10px]">
+                <details open={isOperator} className="text-sm"><summary className="cursor-pointer">Reported facilities and supplies</summary>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 text-sm">
                   {/* Beds */}
                   <div
                     className={`p-1 rounded text-center border ${
@@ -488,22 +491,22 @@ export default function ShelterList({
                     <div className="font-bold">{shelter.powerOk ? 'OK' : 'OUT'}</div>
                     <div className="text-[9px] opacity-70">Power</div>
                   </div>
-                </div>
+                </div></details>
 
                 {/* Capacity breakdown & Actions */}
                 {(() => {
-                  let capacityLabel = 'Open floor space';
+                  let capacityLabel = `${availableBeds} reported free places`;
                   let capacityBadgeClass = 'text-[#2E6E4E] bg-[#2E6E4E]/10 border-[#2E6E4E]/30';
                   if (occupancyPct >= 90) {
-                    capacityLabel = 'Full – divert arrivals';
+                    capacityLabel = availableBeds === 0 ? 'No reported free places' : `${availableBeds} reported free places · nearly full`;
                     capacityBadgeClass = 'text-[#B23A2E] bg-[#B23A2E]/10 border-[#B23A2E]/30 font-bold animate-pulse';
                   } else if (occupancyPct >= 70) {
-                    capacityLabel = 'Packed – seating only';
+                    capacityLabel = `${availableBeds} reported free places · busy`;
                     capacityBadgeClass = 'text-[#C97A2B] bg-[#C97A2B]/10 border-[#C97A2B]/30';
                   }
 
                   return (
-                    <div className="flex items-center justify-between text-[11px] font-mono pt-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm pt-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-[#14231F]/80">
                           {shelter.currentOccupancy}/{shelter.capacity} ({occupancyPct}%)
@@ -513,7 +516,7 @@ export default function ShelterList({
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <button
                           type="button"
                           onClick={(e) => {
@@ -536,7 +539,7 @@ export default function ShelterList({
                               title="Commutative Flow & Delta Log"
                             >
                               <ArrowUpDown className="w-3 h-3 text-[#2E6E4E]" />
-                              <span>Flow / Deltas</span>
+                              <span>Record changes</span>
                             </button>
 
                             <button
@@ -546,7 +549,7 @@ export default function ShelterList({
                               title="Audit readiness & inventory"
                             >
                               <Sliders className="w-3 h-3 text-[#C97A2B]" />
-                              <span>Audit</span>
+                              <span>Check readiness</span>
                             </button>
                           </>
                         )}
@@ -554,7 +557,13 @@ export default function ShelterList({
                     </div>
                   );
                 })()}
-              </div>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {onSelectShelter&&<button type="button" onClick={()=>onSelectShelter(shelter)} className="rounded-lg border px-3 py-2 text-sm">View on map</button>}
+                  <button type="button" onClick={()=>openFieldTool('routes',{destination:{id:shelter.id,name:shelter.name,lat:shelter.lat,lng:shelter.lng}})} className="rounded-lg border px-3 py-2 text-sm">Plan route</button>
+                  {shelter.contact&&<a href={`tel:${shelter.contact}`} className="rounded-lg border px-3 py-2 text-sm inline-flex items-center min-h-11">Call shelter</a>}
+                </div>
+                <p className="text-xs text-[#14231F]/70">Capacity is reported and may change. Call before travel. Distances are straight-line estimates.</p>
+              </article>
             );
           })
         )}

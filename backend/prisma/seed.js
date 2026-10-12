@@ -4,7 +4,12 @@ const bcrypt = require('bcryptjs');
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Starting database seed...');
+  if (process.env.ENABLE_DEMO !== 'true' || process.env.RESET_DEMO_DATA !== 'true' || process.env.NODE_ENV === 'production') {
+    throw new Error('Demo seed resets incident data. Use a disposable development database with ENABLE_DEMO=true and RESET_DEMO_DATA=true');
+  }
+  console.log('Starting explicitly enabled demo seed...');
+  await prisma.supplyDistribution.deleteMany();
+  await prisma.shelterEvent.deleteMany();
 
   // Clear existing data in reverse relation order
   await prisma.supplyShipment.deleteMany();
@@ -42,7 +47,7 @@ async function main() {
       region: 'Bandra West',
       lat: 19.0596,
       lng: 72.8295,
-      trusted: false,
+      trusted: true,
     },
     {
       name: 'NDMA Emergency Operations Center',
